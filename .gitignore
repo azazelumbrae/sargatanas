@@ -1,0 +1,26 @@
+# Runtime data
+*.qcow2
+*.qcow
+*.raw
+*.img
+*.iso
+*.pid
+
+# Local config can hold bridge lines and VPN interface names
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

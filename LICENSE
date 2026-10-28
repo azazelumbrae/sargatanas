@@ -1,5 +1,16 @@
 MIT License
 
+Copyright (c) 2026 Álvaro Souza
+
+Sargatanas is a derivative of "n01d-machine" by the NullSec Team
+(https://github.com/bad-antics/n01d-machine), also released under the MIT
+License. Its original copyright notice is reproduced below as the license
+requires. The rewritten core is original work.
+
+---
+
+MIT License
+
 Copyright (c) 2026 NullSec Team
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

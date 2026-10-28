@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sargatanas"
+version = "0.1.0"
+description = "Sandboxed virtual machines on QEMU, with verified network isolation"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Álvaro Souza" }]
+keywords = ["qemu", "vm", "virtualization", "sandbox", "tor", "vpn"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Emulators",
+    "Topic :: Security",
+]
+
+[project.optional-dependencies]
+gui = ["PyGObject>=3.42"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+sargatanas = "sargatanas.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sargatanas*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

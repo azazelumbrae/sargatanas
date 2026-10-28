@@ -1,28 +1,25 @@
 ## Description
-<!-- Describe your changes in detail -->
 
-## Type of Change
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Security enhancement
-- [ ] Documentation update
+<!-- What does this change, and why? -->
 
-## Security Considerations
-<!-- If this PR affects security features, describe the impact -->
+## Type of change
 
-## How Has This Been Tested?
-<!-- Describe your testing process -->
-- [ ] Tested on Linux
-- [ ] Tested on Windows
-- [ ] Tested on macOS
-- [ ] Tested with Tor enabled
-- [ ] Tested with VPN enabled
-- [ ] Tested network isolation
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Security change (affects an isolation profile - explain below)
+- [ ] Documentation
+- [ ] Refactor
 
-## Checklist
-- [ ] My code follows the project's style guidelines
-- [ ] I have performed a self-review of my own code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix is effective or that my feature works
+## Security impact
+
+<!--
+If this touches sargatanas/profiles.py or sargatanas/qemu.py, describe what a
+guest can now reach that it could not before. Profiles must refuse to launch
+rather than silently degrade.
+-->
+
+## Testing
+
+- [ ] `python -m unittest discover -s tests -t .` passes
+- [ ] Tested on: <!-- Linux / macOS / Windows -->
+- [ ] If networking changed: booted a live ISO and verified connectivity

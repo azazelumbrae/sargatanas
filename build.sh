@@ -1,118 +1,79 @@
-#!/bin/bash
-# n01d Machine Build Script
-# Builds cross-platform releases using Tauri
-
-set -e
+#!/usr/bin/env bash
+# Sargatanas build helper: run the tests, build the wheel, render icons.
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$SCRIPT_DIR/releases/n01d-cross-platform"
+cd "$SCRIPT_DIR"
 
-echo "╔══════════════════════════════════════════╗"
-echo "║       n01d Machine Build Script          ║"
-echo "╚══════════════════════════════════════════╝"
+ICON_SRC="assets/sargatanas-icon.svg"
+ICON_DIR="assets/icons"
 
-# Check dependencies
-check_deps() {
-    echo "[*] Checking dependencies..."
-    
-    if ! command -v cargo &> /dev/null; then
-        echo "[-] Rust/Cargo not found. Install from https://rustup.rs"
-        exit 1
-    fi
-    
-    if ! command -v node &> /dev/null; then
-        echo "[-] Node.js not found. Install from https://nodejs.org"
-        exit 1
-    fi
-    
-    echo "[+] Dependencies OK"
+usage() {
+    cat <<'EOF'
+Usage: ./build.sh [test|dist|icons|clean]
+
+  test   Run the unit test suite (default)
+  dist   Build sdist + wheel into dist/
+  icons  Render PNG/ICO/ICNS from the SVG (needs ImageMagick or rsvg-convert)
+  clean  Remove build artefacts
+EOF
 }
 
-# Install Tauri CLI
-install_tauri() {
-    if ! command -v cargo-tauri &> /dev/null; then
-        echo "[*] Installing Tauri CLI..."
-        cargo install tauri-cli
-    fi
-    echo "[+] Tauri CLI ready"
+run_tests() {
+    echo "[*] Running tests..."
+    python3 -m unittest discover -s tests -t . -v
 }
 
-# Generate icons from SVG
-generate_icons() {
-    echo "[*] Generating icons..."
-    ICON_DIR="$PROJECT_DIR/src-tauri/icons"
-    SVG_SOURCE="$SCRIPT_DIR/n01d-icon.svg"
-    
-    if command -v convert &> /dev/null && [ -f "$SVG_SOURCE" ]; then
-        convert -background none "$SVG_SOURCE" -resize 32x32 "$ICON_DIR/32x32.png"
-        convert -background none "$SVG_SOURCE" -resize 128x128 "$ICON_DIR/128x128.png"
-        convert -background none "$SVG_SOURCE" -resize 256x256 "$ICON_DIR/128x128@2x.png"
-        
-        # Windows ICO
-        convert -background none "$SVG_SOURCE" -define icon:auto-resize=256,128,64,48,32,16 "$ICON_DIR/icon.ico"
-        
-        # macOS ICNS (requires iconutil on mac)
-        if command -v iconutil &> /dev/null; then
-            mkdir -p /tmp/n01d.iconset
-            for size in 16 32 64 128 256 512; do
-                convert -background none "$SVG_SOURCE" -resize ${size}x${size} "/tmp/n01d.iconset/icon_${size}x${size}.png"
-                convert -background none "$SVG_SOURCE" -resize $((size*2))x$((size*2)) "/tmp/n01d.iconset/icon_${size}x${size}@2x.png"
-            done
-            iconutil -c icns /tmp/n01d.iconset -o "$ICON_DIR/icon.icns"
-            rm -rf /tmp/n01d.iconset
-        fi
-        
-        echo "[+] Icons generated"
+build_dist() {
+    run_tests
+    echo "[*] Building package..."
+    python3 -m pip install --upgrade build >/dev/null
+    python3 -m build
+    echo "[+] Artefacts:"
+    ls -1 dist/
+}
+
+render_icons() {
+    mkdir -p "$ICON_DIR"
+    if command -v rsvg-convert >/dev/null; then
+        render() { rsvg-convert -w "$1" -h "$1" "$ICON_SRC" -o "$2"; }
+    elif command -v magick >/dev/null; then
+        render() { magick -background none "$ICON_SRC" -resize "$1x$1" "$2"; }
+    elif command -v convert >/dev/null; then
+        render() { convert -background none "$ICON_SRC" -resize "$1x$1" "$2"; }
     else
-        echo "[!] ImageMagick not found, using existing icons"
+        echo "[!] Install rsvg-convert or ImageMagick to render icons"
+        return 1
     fi
-}
 
-# Build for current platform
-build() {
-    echo "[*] Building n01d Machine..."
-    cd "$PROJECT_DIR"
-    cargo tauri build
-    
-    echo ""
-    echo "[+] Build complete!"
-    echo ""
-    echo "Output files:"
-    find src-tauri/target/release/bundle -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "*.dmg" \) 2>/dev/null | while read f; do
-        echo "  - $f"
+    for size in 16 32 64 128 256 512 1024; do
+        render "$size" "$ICON_DIR/${size}x${size}.png"
     done
+
+    if command -v magick >/dev/null || command -v convert >/dev/null; then
+        tool=$(command -v magick || command -v convert)
+        "$tool" -background none "$ICON_SRC" -define icon:auto-resize=256,128,64,48,32,16 \
+            "$ICON_DIR/icon.ico"
+    fi
+
+    if command -v iconutil >/dev/null; then
+        set_dir="$ICON_DIR/Sargatanas.iconset"
+        rm -rf "$set_dir" && mkdir -p "$set_dir"
+        for size in 16 32 128 256 512; do
+            render "$size" "$set_dir/icon_${size}x${size}.png"
+            render "$((size * 2))" "$set_dir/icon_${size}x${size}@2x.png"
+        done
+        iconutil -c icns "$set_dir" -o "$ICON_DIR/icon.icns"
+        rm -rf "$set_dir"
+    fi
+    echo "[+] Icons in $ICON_DIR"
 }
 
-# Development mode
-dev() {
-    echo "[*] Starting development server..."
-    cd "$PROJECT_DIR"
-    cargo tauri dev
-}
-
-# Main
-case "${1:-build}" in
-    build)
-        check_deps
-        install_tauri
-        generate_icons
-        build
-        ;;
-    dev)
-        check_deps
-        install_tauri
-        dev
-        ;;
-    icons)
-        generate_icons
-        ;;
-    *)
-        echo "Usage: $0 [build|dev|icons]"
-        echo ""
-        echo "Commands:"
-        echo "  build  - Build release binaries (default)"
-        echo "  dev    - Start development mode"
-        echo "  icons  - Generate icons from SVG"
-        exit 1
-        ;;
+case "${1:-test}" in
+    test) run_tests ;;
+    dist) build_dist ;;
+    icons) render_icons ;;
+    clean) rm -rf dist build *.egg-info .pytest_cache && find . -name __pycache__ -type d -exec rm -rf {} + ;;
+    -h|--help|help) usage ;;
+    *) usage; exit 1 ;;
 esac

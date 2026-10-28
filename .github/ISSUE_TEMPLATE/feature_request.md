@@ -1,28 +1,13 @@
 ---
 name: Feature request
-about: Suggest a new feature for n01d Machine
-title: '[FEATURE] '
+about: Suggest a capability
+title: '[FEAT] '
 labels: enhancement
-assignees: ''
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is.
+**The problem**
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+**The proposal**
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
-
-**Category:**
-- [ ] Security Feature
-- [ ] Network Isolation
-- [ ] VPN/Tor Integration
-- [ ] VM Management
-- [ ] UI/UX Improvement
-- [ ] Platform Support
-- [ ] Other
-
-**Additional context**
-Add any other context or screenshots about the feature request here.
+**Does it affect isolation?**
+<!-- A new profile must say what it enforces and what it does not. -->

@@ -1,37 +1,28 @@
 ---
 name: Bug report
-about: Create a report to help us improve n01d Machine
+about: Something does not work as documented
 title: '[BUG] '
 labels: bug
-assignees: ''
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+**What happened**
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. See error
+**What you expected**
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+**Steps to reproduce**
+1.
+2.
+3.
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+**Environment**
+- OS and version:
+- Python version (`python3 --version`):
+- QEMU version (`qemu-system-x86_64 --version` or `qemu-system-aarch64`):
+- Sargatanas version (`sargatanas --version`):
 
-**System Information:**
- - OS: [e.g. Windows 11, macOS 14, Ubuntu 22.04]
- - n01d Machine Version: [e.g. 1.1.0]
- - QEMU Version: [e.g. 8.2.0]
+**Profile in use** (isolated / nat / host-only / tor / vpn)
 
-**Security Profile Used (if applicable):**
- - [ ] Paranoid
- - [ ] Stealth
- - [ ] Isolated
- - [ ] Pentesting
- - [ ] Custom
-
-**Additional context**
-Add any other context about the problem here.
+**Output of `sargatanas status`**
+```
+paste here
+```

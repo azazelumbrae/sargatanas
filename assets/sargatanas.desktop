@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Sargatanas
+GenericName=Virtual Machine Manager
+Comment=Sandboxed virtual machines on QEMU
+Exec=sargatanas gui
+Icon=sargatanas
+Terminal=false
+Categories=System;Emulator;
+Keywords=vm;virtual;machine;qemu;kvm;sandbox;iso;
+StartupNotify=true
+StartupWMClass=sargatanas
