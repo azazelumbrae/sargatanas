@@ -47,10 +47,32 @@ BANNER = r"""
   █▄▄ █▀█ █▀▄ █▄█ █▀█ ░█░ █▀█ █░▀█ █▀█ ▄█
 """
 
+BANNER_ASCII = r"""
+  sssss  aaa  rrrr   ggg  aaa  ttt  aaa  n   a
+  s     a   a r   r g     a   a  t  a   a nn  a
+  sssss aaaaa rrrr  g  gg aaaaa  t  aaaaa n n a
+      s a   a r  r  g   g a   a  t  a   a n  na
+  sssss a   a r   r  ggg  a   a  t  a   a n   a
+"""
+
+
+def _safe_text(text: str, fallback: str = "") -> str:
+    """Return `text`, or `fallback`, depending on what the terminal can encode.
+
+    Windows consoles still default to cp1252, where the block characters in
+    BANNER raise UnicodeEncodeError and kill the CLI outright.
+    """
+    try:
+        text.encode(sys.stdout.encoding or "utf-8")
+        return text
+    except (UnicodeEncodeError, LookupError):
+        return fallback
+
 
 def banner() -> None:
-    print(color(BANNER, CYAN))
-    print(f"  {color(f'{APP_NAME} {__version__} · sandboxed VMs on QEMU', DIM)}")
+    art = _safe_text(BANNER) or BANNER_ASCII
+    print(color(art, CYAN))
+    print(f"  {color(f'{APP_NAME} {__version__} - sandboxed VMs on QEMU', DIM)}")
     print(f"  {color(f'data: {paths.home()}', DIM)}\n")
 
 
@@ -105,7 +127,7 @@ def cmd_list(_: argparse.Namespace) -> int:
         print(color("  No VMs yet. Create one: sargatanas create <name>", YELLOW))
         return 0
     print(f"  {'NAME':<20} {'STATE':<9} {'RAM':>6} {'CPU':>4}  {'PROFILE':<10} DISK")
-    print("  " + "─" * 70)
+    print("  " + _safe_text("─" * 70, "-" * 70))
     for row in rows:
         state = color("running", GREEN) if row.running else color("stopped", DIM)
         print(f"  {row.name:<20} {state:<9} {row.ram:>5}M {row.cpus:>4}  "
@@ -127,7 +149,7 @@ def cmd_images(args: argparse.Namespace) -> int:
 
     images = cloud.available_images()
     print(f"  {'KEY':<10} {'SIZE':>7}  STATUS       NAME")
-    print("  " + "─" * 66)
+    print("  " + _safe_text("─" * 66, "-" * 66))
     for key, img in images.items():
         present = cloud.image_path(key).exists()
         status = color("downloaded", GREEN) if present else color("missing", YELLOW)
@@ -212,7 +234,7 @@ def cmd_isos(_: argparse.Namespace) -> int:
         print(color(f"  No ISOs. Drop one in {paths.iso_dir()}", YELLOW))
         return 0
     for iso in isos:
-        print(f"  • {iso.name:<45} {fmt_size(iso):>8}  {color(str(iso.parent), DIM)}")
+        print(f"  {_safe_text('•', '*')} {iso.name:<45} {fmt_size(iso):>8}  {color(str(iso.parent), DIM)}")
     return 0
 
 

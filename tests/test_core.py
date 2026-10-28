@@ -410,6 +410,30 @@ class TestProcess(unittest.TestCase):
         proc.kill.assert_called_once()
 
 
+class TestWindowsEncoding(unittest.TestCase):
+    """The CLI must not crash on a cp1252 console (Windows default)."""
+
+    def test_banner_falls_back_to_ascii(self):
+        import io
+        from sargatanas import cli
+        raw = io.BytesIO()
+        fake = io.TextIOWrapper(raw, encoding="cp1252")
+        with mock.patch.object(cli.sys, "stdout", fake):
+            cli.banner()          # must not raise UnicodeEncodeError
+            fake.flush()
+        out = raw.getvalue().decode("cp1252")
+        self.assertIn("Sargatanas", out)
+        self.assertIn("sandboxed VMs", out)
+
+    def test_safe_text_returns_fallback(self):
+        from sargatanas import cli
+        import io
+        fake = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with mock.patch.object(cli.sys, "stdout", fake):
+            self.assertEqual(cli._safe_text("██", "ascii"), "ascii")
+            self.assertEqual(cli._safe_text("plain"), "plain")
+
+
 class TestCloud(TempHome):
     def test_known_images(self):
         from sargatanas import cloud
