@@ -12,13 +12,41 @@ touches the worker directly.
 
 from __future__ import annotations
 
+import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import APP_NAME, __version__, config, paths, profiles, qemu, vm
+
+
+def _ensure_tcl_library() -> None:
+    """Point Tcl at its own script library when the interpreter cannot find it.
+
+    Some relocatable/uv-built Pythons and Homebrew builds fail with
+    "Tcl wasn't installed properly" because TCL_LIBRARY is unset and the
+    compiled-in prefix is wrong. We only set the variable when the standard
+    location is missing, so a healthy interpreter is never overridden.
+    """
+    if os.environ.get("TCL_LIBRARY"):
+        return
+    try:
+        tcl = tk.Tcl()
+        if tcl.eval("info library"):
+            return
+    except tk.TclError:
+        pass
+    base = Path(sys.base_prefix)
+    for lib in (base / "lib" / "tcl8.6", base / "lib" / "tcl9.0", base / "lib" / "tcl9.1"):
+        if (lib / "init.tcl").exists():
+            os.environ["TCL_LIBRARY"] = str(lib)
+            tk_lib = base / "lib" / ("tk" + lib.name[len("tcl"):])
+            if (tk_lib / "tk.tcl").exists():
+                os.environ["TK_LIBRARY"] = str(tk_lib)
+            return
 
 ACCENT = "#c9a227"
 BG = "#14161f"
@@ -415,8 +443,9 @@ def _find_isos() -> list[Path]:
 
 def main() -> int:
     paths.ensure_dirs()
+    _ensure_tcl_library()
     App().mainloop()
     return 0
 
 
-__all__ = ["main", "App"]
+__all__ = ["main", "App", "_ensure_tcl_library"]
