@@ -772,8 +772,22 @@ def _find_isos() -> list[Path]:
 def main() -> int:
     paths.ensure_dirs()
     _ensure_tcl_library()
-    App().mainloop()
+    app = App()
+    _set_window_icon(app)
+    app.mainloop()
     return 0
+
+
+def _set_window_icon(app: tk.Tk) -> None:
+    """Load the app icon, if present. Missing icons are never fatal."""
+    icon = Path(__file__).resolve().parent.parent / "assets" / "icons" / "sargatanas.png"
+    if not icon.exists():
+        return
+    try:
+        app._icon_image = tk.PhotoImage(file=str(icon))  # keep a reference
+        app.iconphoto(True, app._icon_image)
+    except (tk.TclError, OSError):
+        pass
 
 
 __all__ = ["main", "App", "_ensure_tcl_library"]
