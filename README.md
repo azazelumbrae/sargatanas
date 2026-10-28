@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/sargatanas-icon.svg" width="140" height="140" alt="Sargatanas">
+<img src="assets/sargatanas-banner.png" width="100%" alt="Sargatanas">
 
 # Sargatanas
 
