@@ -3,7 +3,7 @@
 ## From source
 
 ```bash
-git clone https://github.com/mildredhoe/sargantanas
+git clone https://github.com/azazelumbrae/sargantanas
 cd sargantanas
 python3 -m venv .venv && . .venv/bin/activate
 pip install .
