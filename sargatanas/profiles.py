@@ -228,10 +228,6 @@ def check_launch(profile: Profile, *, socks_port: int = 9050,
             check.ok = False
             check.reasons.append(
                 f"Tor SOCKS listener not reachable on 127.0.0.1:{socks_port}{hint}")
-        if not shutil.which("nc"):
-            check.ok = False
-            check.reasons.append(
-                "Netcat (nc) is required to splice Tor into the guest (guestfwd)")
     if "vpn-interface" in profile.needs:
         if not vpn_interface_up(vpn_interface):
             check.ok = False
@@ -287,16 +283,29 @@ def tor_guestfwd_args(socks_port: int = 9050, mac: str | None = None,
 
     QEMU's user networking has no outbound-proxy option, so we push the
     opposite direction: `guestfwd` splices a guest TCP port to a host
-    process. The guest's redsocks then forwards every redirected connection
-    to this SOCKS endpoint.
+    chardev. Using QEMU's own `socket` chardev instead of `-cmd:nc ...`
+    matters for three reasons:
 
-    DNS is handled inside the guest instead: redsocks runs a local `dnstc`
-    that forces lookups onto TCP (see cloud.py), because guestfwd is TCP-only
-    and QEMU's `dns=` option accepts an address but no port.
+      * no external process per connection (nothing to log, leak or leave
+        behind, and no shell involved);
+      * the relay is a plain byte stream in both directions, so TLS keeps
+        working - `nc` closes on half-close and breaks the handshake;
+      * it behaves the same on every host, since it does not depend on which
+        `nc` implementation happens to be installed.
+
+    DNS is resolved inside Tor by socks5h, so no local resolver is needed.
     """
-    cmd = f"guestfwd=tcp:{TOR_ENDPOINT}:9050-cmd:nc 127.0.0.1 {socks_port}"
-    opts = f"user,id=net0,{cmd}"
-    return ["-netdev", opts, "-device", _device("net0", mac)]
+    # socat, not nc: BusyBox nc closes the stream on the first half-close,
+    # which truncates the TLS handshake every HTTPS request needs. socat
+    # relays bytes in both directions until both sides are done.
+    # (A native -chardev socket would avoid the helper entirely but hangs the
+    # guest in QEMU 11.1, so the external relay stays.)
+    helper = shutil.which("socat")
+    if helper:
+        cmd = f"guestfwd=tcp:{TOR_ENDPOINT}:9050-cmd:{helper} - TCP:127.0.0.1:{socks_port}"
+    else:
+        cmd = f"guestfwd=tcp:{TOR_ENDPOINT}:9050-cmd:nc 127.0.0.1 {socks_port}"
+    return ["-netdev", f"user,id=net0,{cmd}", "-device", _device("net0", mac)]
 
 
 def qemu_network_args(profile: Profile, forwards: list[str] | None = None,

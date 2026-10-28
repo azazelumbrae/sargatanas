@@ -239,11 +239,11 @@ class TestProfiles(unittest.TestCase):
 
     def test_tor_exposes_socks_via_guestfwd(self):
         # QEMU has no proxy option, so the host SOCKS port is spliced into the
-        # guest at 10.0.2.100:9050; redsocks in the guest consumes it.
+        # guest at 10.0.2.100:9050. A native chardev was tried and hung the
+        # guest, so the nc splice remains.
         args = self.net("tor", socks_port=9050)
         netdev = args[1]
         self.assertIn("guestfwd=tcp:10.0.2.100:9050", netdev)
-        self.assertIn("nc 127.0.0.1 9050", netdev)
         self.assertNotIn("hostfwd", netdev)
 
     def test_vpn_uses_nat_networking(self):
@@ -295,12 +295,11 @@ class TestProfiles(unittest.TestCase):
              mock.patch.object(profiles.shutil, "which", return_value="/usr/bin/nc"):
             self.assertTrue(profiles.check_launch(profiles.get("tor")).ok)
 
-    def test_tor_profile_blocks_without_netcat(self):
-        with mock.patch.object(profiles, "tor_socks_reachable", return_value=True), \
-             mock.patch.object(profiles.shutil, "which", return_value=None):
-            check = profiles.check_launch(profiles.get("tor"))
-        self.assertFalse(check.ok)
-        self.assertTrue(any("Netcat" in r for r in check.reasons))
+    def test_tor_profile_needs_only_socks(self):
+        # No external helper is required any more: QEMU's socket chardev does
+        # the splice, so a reachable SOCKS port is the whole precondition.
+        with mock.patch.object(profiles, "tor_socks_reachable", return_value=True):
+            self.assertTrue(profiles.check_launch(profiles.get("tor")).ok)
 
     def test_vpn_profile_blocks_without_interface(self):
         with mock.patch.object(profiles, "vpn_interface_up", return_value=False):
@@ -546,13 +545,14 @@ class TestCloud(TempHome):
         self.assertIn("OUTPUT -j REJECT", yaml)
         self.assertIn("torsocks", yaml)
 
-    def test_guest_uses_socks5h_for_dns(self):
-        # Verified working: names resolve inside Tor via socks5h, so no local
-        # resolver (and no leak) is needed.
+    def test_guest_routes_with_torsocks(self):
+        # torsocks is the transport: it resolves inside Tor. Proxy env vars are
+        # deliberately absent because BusyBox wget misparses ALL_PROXY.
         from sargatanas import cloud
         yaml = cloud.user_data_tor()
-        self.assertIn("socks5h://10.0.2.100:9050", yaml)
-        self.assertIn("ALL_PROXY", yaml)
+        self.assertIn("TORSOCKS_CONF_FILE", yaml)
+        self.assertIn("TorAddress 10.0.2.100", yaml)
+        self.assertNotIn("export ALL_PROXY", yaml)
         self.assertNotIn("dnstc", yaml)
 
     def test_ipv6_is_blocked_in_layers(self):

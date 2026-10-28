@@ -188,18 +188,16 @@ echo "sargatanas: phase 2 - enforcing Tor"
 # DNS: no local resolver. Names are resolved *inside* Tor by socks5h.
 printf 'nameserver 127.0.0.1\\n' > /etc/resolv.conf
 
-# Programs that honour proxy variables go straight to Tor.
+# torsocks is the transport: it intercepts connect()/getaddrinfo() and sends
+# everything through Tor with socks5h, so names resolve at the exit node.
+# Proxy environment variables are deliberately NOT set: BusyBox wget treats
+# ALL_PROXY as a URL and every tool parses socks5h differently, which caused
+# failures that looked like network bugs.
 P=/etc/profile.d/90-sargatanas-tor.sh
 : > "$P"
-echo 'export ALL_PROXY="socks5h://10.0.2.100:9050"' >> "$P"
-echo 'export all_proxy="$ALL_PROXY"' >> "$P"
-echo 'export HTTPS_PROXY="$ALL_PROXY" HTTP_PROXY="$ALL_PROXY"' >> "$P"
-echo 'export https_proxy="$ALL_PROXY" http_proxy="$ALL_PROXY"' >> "$P"
+echo 'export TORSOCKS_CONF_FILE=/etc/tor/torsocks.conf' >> "$P"
+echo 'alias tor-run="torsocks"' >> "$P"
 : > /etc/environment
-echo 'ALL_PROXY=socks5h://10.0.2.100:9050' >> /etc/environment
-echo 'HTTPS_PROXY=socks5h://10.0.2.100:9050' >> /etc/environment
-echo 'HTTP_PROXY=socks5h://10.0.2.100:9050' >> /etc/environment
-. "$P"
 
 # Programs that ignore proxies are wrapped transparently: torsocks
 # intercepts connect()/getaddrinfo() and sends everything to Tor.
@@ -217,9 +215,11 @@ fi
 # connection, which is why the earlier design hung. Allowing only the Tor
 # endpoint and dropping everything else is simpler and actually holds.
 iptables -F OUTPUT 2>/dev/null || true
+# Only the Tor endpoint may leave the guest. `-m state` is deliberately not
+# used: minimal Alpine images ship iptables without conntrack, so the module
+# silently fails and the whitelist blocks everything.
 iptables -A OUTPUT -o lo -j ACCEPT
-iptables -A OUTPUT -d "$TOR_IP" -p tcp --dport 9050 -j ACCEPT
-iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -d "$TOR_IP" -j ACCEPT
 iptables -A OUTPUT -j REJECT
 
 # ---- IPv6: off, in layers ---------------------------------------------
