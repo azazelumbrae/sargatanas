@@ -281,22 +281,27 @@ def _internal_netdev(net_id: str) -> list[str]:
 TOR_ENDPOINT = "10.0.2.100"
 
 
-def tor_guestfwd_args(socks_port: int = 9050, mac: str | None = None) -> list[str]:
+def tor_guestfwd_args(socks_port: int = 9050, mac: str | None = None,
+                      dns_port: int = 5353) -> list[str]:
     """Expose the host's Tor SOCKS port inside the guest, without root.
 
     QEMU's user networking has no outbound-proxy option, so we push the
     opposite direction: `guestfwd` splices a guest TCP port to a host
     process. The guest's redsocks then forwards every redirected connection
     to this SOCKS endpoint.
+
+    DNS is handled inside the guest instead: redsocks runs a local `dnstc`
+    that forces lookups onto TCP (see cloud.py), because guestfwd is TCP-only
+    and QEMU's `dns=` option accepts an address but no port.
     """
     cmd = f"guestfwd=tcp:{TOR_ENDPOINT}:9050-cmd:nc 127.0.0.1 {socks_port}"
-    return ["-netdev", f"user,id=net0,{cmd}",
-            "-device", _device("net0", mac)]
+    opts = f"user,id=net0,{cmd}"
+    return ["-netdev", opts, "-device", _device("net0", mac)]
 
 
 def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
                       socks_port: int = 9050, mac: str | None = None,
-                      **_ignored: object) -> list[str]:
+                      dns_port: int = 5353, **_ignored: object) -> list[str]:
     """Translate a profile into QEMU networking arguments.
 
     For `tor`/`stealth` the guest gets no inbound ports and the Tor endpoints
@@ -313,7 +318,7 @@ def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
     if net == "internal":
         return _internal_netdev("net0")
     if net == "tor":
-        return tor_guestfwd_args(socks_port, mac=mac)
+        return tor_guestfwd_args(socks_port, mac=mac, dns_port=dns_port)
     if net == "vpn":
         return _user_netdev("net0", forwards, mac=mac)
     if net == "pentesting":

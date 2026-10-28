@@ -266,6 +266,12 @@ class TestProfiles(unittest.TestCase):
         args = self.net("nat", mac="02:aa:bb:cc:dd:ee")
         self.assertIn("mac=02:aa:bb:cc:dd:ee", " ".join(args))
 
+    def test_tor_dns_does_not_use_qemu_dns_option(self):
+        # QEMU's dns= takes an address but no port, so it cannot reach Tor's
+        # DNSPort; DNS is forced onto TCP inside the guest instead.
+        args = self.net("tor", dns_port=5353)
+        self.assertNotIn("dns=", args[1])
+
     def test_mac_in_tor_guestfwd_device(self):
         args = self.net("tor", mac="02:aa:bb:cc:dd:ee")
         self.assertIn("mac=02:aa:bb:cc:dd:ee", " ".join(args))
@@ -542,6 +548,13 @@ class TestCloud(TempHome):
         self.assertIn("type = socks5", yaml)
         self.assertIn("/usr/local/bin/sargatanas-tor", yaml)
 
+    def test_guest_resolver_points_at_local_dnstc(self):
+        from sargatanas import cloud
+        yaml = cloud.user_data_tor()
+        self.assertIn("nameserver 127.0.0.1", yaml)
+        self.assertIn("dnstc", yaml)
+        self.assertIn("local_port = 53", yaml)
+
     def test_ipv6_is_blocked_in_layers(self):
         # redsocks is IPv4/TCP only; a single missing tool must not leave a
         # silent IPv6 leak path.
@@ -558,6 +571,21 @@ class TestCloud(TempHome):
         yaml = cloud.user_data_tor()
         self.assertIn("WARNING IPv6 could not be disabled", yaml)
         self.assertIn("all IPv4 TCP now routed through Tor", yaml)
+
+    def test_no_heredoc_marker_in_script(self):
+        # A heredoc EOF cannot close once the YAML block indents it, which
+        # silently truncated the redsocks config before.
+        from sargatanas import cloud
+        body = cloud.user_data_tor().split("content: |")[1].split("runcmd:")[0]
+        for line in body.splitlines():
+            self.assertNotEqual(line.strip(), "EOF", line)
+
+    def test_redsocks_forces_dns_over_tcp(self):
+        from sargatanas import cloud
+        yaml = cloud.user_data_tor()
+        self.assertIn("dnstc", yaml)
+        self.assertIn("local_port = 53", yaml)
+        self.assertIn("nameserver 127.0.0.1", yaml)
 
     def test_generated_script_is_one_shell_block(self):
         # A stray newline inside a quoted printf broke the YAML block before.

@@ -243,9 +243,8 @@ def start(name: str, *, live: bool = False, install: bool = False,
         prof,
         forwards=cfg.network.forwards,
         socks_port=cfg.tor.socks_port,
-        mac=mac,
-        trans_port=cfg.tor.trans_port,
         dns_port=cfg.tor.dns_port,
+        mac=mac,
     ) + extra
 
     # Attach the cloud-init seed so the guest applies Tor routing on boot.

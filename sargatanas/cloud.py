@@ -168,27 +168,34 @@ if ! command -v redsocks >/dev/null 2>&1; then
     exit 1
 fi
 
-cat > /etc/redsocks.conf <<EOF
-base {{
-    log_debug = off;
-    log_info = off;
-    log = "file:/var/log/redsocks.log";
-    daemon = on;
-    redirector = iptables;
-}}
-redsocks {{
-    local_ip = 127.0.0.1;
-    local_port = $REDSOCKS;
-    ip = $TOR_IP;
-    port = 9050;
-    type = socks5;
-}}
-EOF
+# Written with printf instead of a heredoc: the whole script is indented
+# inside the YAML block, which would stop an EOF marker from closing.
+: > /etc/redsocks.conf
+echo 'base {{' >> /etc/redsocks.conf
+echo '    log_debug = off;' >> /etc/redsocks.conf
+echo '    log_info = off;' >> /etc/redsocks.conf
+echo '    log = "file:/var/log/redsocks.log";' >> /etc/redsocks.conf
+echo '    daemon = on;' >> /etc/redsocks.conf
+echo '    redirector = iptables;' >> /etc/redsocks.conf
+echo '}}' >> /etc/redsocks.conf
+echo 'redsocks {{' >> /etc/redsocks.conf
+echo '    local_ip = 127.0.0.1;' >> /etc/redsocks.conf
+echo "    local_port = $REDSOCKS;" >> /etc/redsocks.conf
+echo "    ip = $TOR_IP;" >> /etc/redsocks.conf
+echo '    port = 9050;' >> /etc/redsocks.conf
+echo '    type = socks5;' >> /etc/redsocks.conf
+echo '}}' >> /etc/redsocks.conf
+# DNS over UDP cannot be proxied (guestfwd is TCP-only). dnstc answers every
+# UDP query with a truncated reply, so the resolver retries over TCP - and
+# TCP goes through redsocks into Tor. This is how DNS stops leaking.
+echo 'dnstc {{' >> /etc/redsocks.conf
+echo '    local_ip = 127.0.0.1;' >> /etc/redsocks.conf
+echo '    local_port = 53;' >> /etc/redsocks.conf
+echo '}}' >> /etc/redsocks.conf
 
-# DNS must not leak. QEMU's built-in DNS (10.0.2.3) is used for resolution,
-# but `use-vc` forces every lookup over TCP so it enters the same REDIRECT
-# chain as the rest of the traffic and travels through Tor.
-printf 'nameserver 10.0.2.3\\noptions use-vc\\n' > /etc/resolv.conf
+# with `dns=` in the netdev, so UDP and TCP lookups both travel through Tor.
+# DNS must not leak: the local dnstc forces a TCP retry into Tor.
+printf 'nameserver 127.0.0.1\\n' > /etc/resolv.conf
 
 redsocks -c /etc/redsocks.conf 2>/dev/null || true
 sleep 1
