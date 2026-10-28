@@ -156,6 +156,18 @@ class TestQemuArgv(unittest.TestCase):
         self.assertNotIn("-vga", argv)
         self.assertIn("ramfb", argv)
 
+    def test_aarch64_includes_a_keyboard(self):
+        # Only usb-tablet meant the guest booted but never received typing.
+        with mock.patch.object(qemu, "host_arch", return_value="aarch64"):
+            argv = qemu.build_argv(self.spec(), qemu="qemu")
+        self.assertIn("usb-kbd", argv)
+        self.assertIn("usb-tablet", argv)
+
+    def test_x86_includes_a_keyboard(self):
+        with mock.patch.object(qemu, "host_arch", return_value="x86_64"):
+            argv = qemu.build_argv(self.spec(), qemu="qemu")
+        self.assertIn("usb-kbd", argv)
+
     def test_x86_uses_virtio_vga(self):
         with mock.patch.object(qemu, "host_arch", return_value="x86_64"):
             argv = qemu.build_argv(self.spec(), qemu="qemu")

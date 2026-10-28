@@ -183,10 +183,20 @@ def machine_args() -> list[str]:
 
 
 def video_args() -> list[str]:
-    """aarch64 has no virtio VGA; `ramfb` is the ARM-friendly framebuffer."""
+    """Display, USB controller and input devices.
+
+    aarch64 has no virtio VGA, so `ramfb` provides the framebuffer. A USB
+    controller plus an explicit keyboard are required: with only `usb-tablet`
+    (a pointer) the guest boots but never receives typing.
+    """
     if host_arch() == "aarch64":
-        return ["-device", "ramfb", "-device", "qemu-xhci", "-device", "usb-tablet"]
-    return ["-vga", "virtio", "-usb", "-device", "usb-tablet"]
+        return ["-device", "ramfb",
+                "-device", "qemu-xhci",
+                "-device", "usb-kbd",
+                "-device", "usb-tablet"]
+    return ["-vga", "virtio", "-usb",
+            "-device", "usb-kbd",
+            "-device", "usb-tablet"]
 
 
 def _firmware_share() -> Path:
