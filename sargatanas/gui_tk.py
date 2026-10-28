@@ -174,6 +174,7 @@ class App(tk.Tk):
         self._button(bar, "🚀 Launch…", self._launch_dialog)
         self._button(bar, "■ Stop", self._stop)
         self._button(bar, "🛡 Profile…", self._change_profile)
+        self._button(bar, "🔧 Repair", self._repair)
         self._button(bar, "🗑 Delete", self._delete, "Danger.TButton")
         self._button(bar, "↻ Refresh", self.refresh_vms)
 
@@ -846,6 +847,22 @@ class App(tk.Tk):
         else:
             self._fail(f"Could not stop '{name}'")
         self.refresh_vms()
+
+    def _repair(self) -> None:
+        """Reset a corrupted UEFI NVRAM (symptom: the window shows "Shell>")."""
+        name = self._selected_vm()
+        if not name:
+            self._fail("Select a machine first")
+            return
+        try:
+            fixed = vm.repair_boot(name, cfg=self.cfg)
+        except Exception as exc:  # noqa: BLE001
+            self._fail(str(exc))
+            return
+        if fixed:
+            self.set_status(f"'{name}': UEFI NVRAM reset - run it again")
+        else:
+            self.set_status(f"'{name}': nothing to repair")
 
     def _delete(self) -> None:
         name = self._selected_vm()

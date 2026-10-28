@@ -365,6 +365,26 @@ class TestVm(TempHome):
         self.assertNotIn("-sandbox", argv)
 
 
+class TestBootRepair(TempHome):
+    def test_repair_resets_nvram(self):
+        with mock.patch("sargatanas.qemu.create_disk"):
+            vm.create("bootable", profile="nat")
+        vars_file = paths.vm_dir() / "bootable" / "efi-vars.fd"
+        vars_file.write_bytes(b"\x00corrupt\x00")
+        with mock.patch("sargatanas.qemu.reset_firmware_vars",
+                        side_effect=lambda p: p.write_bytes(b"clean") or True):
+            self.assertTrue(vm.repair_boot("bootable"))
+        self.assertEqual(vars_file.read_bytes(), b"clean")
+
+    def test_repair_refuses_running(self):
+        with mock.patch("sargatanas.qemu.create_disk"):
+            vm.create("busyboot", profile="nat")
+        (paths.vm_dir() / "busyboot" / "efi-vars.fd").write_bytes(b"x")
+        with mock.patch.object(vm, "is_running", return_value=True):
+            with self.assertRaises(vm.VmError):
+                vm.repair_boot("busyboot")
+
+
 class TestProcess(unittest.TestCase):
     """psutil-backed process checks, with psutil itself mocked out."""
 

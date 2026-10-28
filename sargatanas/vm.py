@@ -302,6 +302,24 @@ def restore(name: str, snap: str, cfg: config.Config | None = None) -> None:
     qemu.snapshot_apply(Path(cfg.vms[name].disk), snap)
 
 
+def repair_boot(name: str, cfg: config.Config | None = None) -> bool:
+    """Reset a VM's UEFI NVRAM so it boots again.
+
+    Symptom: the window shows the UEFI shell ("Shell>") instead of the guest,
+    because repeated aborted boots corrupted the boot-order variables. Returns
+    True when a firmware file was actually rewritten.
+    """
+    cfg = cfg or config.load()
+    if name not in cfg.vms:
+        raise VmError(f"VM '{name}' not found")
+    if is_running(name):
+        raise VmError(f"VM '{name}' is running; stop it first")
+    vars_path = Path(cfg.vms[name].disk).parent / "efi-vars.fd"
+    if not vars_path.exists():
+        return False
+    return qemu.reset_firmware_vars(vars_path)
+
+
 def snapshots(name: str, cfg: config.Config | None = None) -> list[str]:
     cfg = cfg or config.load()
     if name not in cfg.vms:

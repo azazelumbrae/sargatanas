@@ -290,6 +290,16 @@ def _safe(fn) -> str:
         return color(str(exc), RED)
 
 
+def cmd_repair(args: argparse.Namespace) -> int:
+    if not vm.repair_boot(args.name):
+        print(color(f"[-] Nothing to repair for '{args.name}' "
+                    f"(no efi-vars.fd; x86 hosts do not use one)", YELLOW))
+        return 1
+    print(color(f"[+] UEFI NVRAM reset for '{args.name}'", GREEN))
+    print(color("    Boot it again: sargatanas run " + args.name, DIM))
+    return 0
+
+
 def cmd_snapshot(args: argparse.Namespace) -> int:
     vm.snapshot(args.name, args.snapshot)
     print(color(f"[+] Snapshot '{args.snapshot}' created", GREEN))
@@ -542,6 +552,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("status", help="Host and tooling status")
     s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("repair", help="Fix a VM stuck at the UEFI shell")
+    s.add_argument("name")
+    s.set_defaults(func=cmd_repair)
 
     s = sub.add_parser("snapshot", help="Snapshot a stopped VM's disk")
     s.add_argument("name")

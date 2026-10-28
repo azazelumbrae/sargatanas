@@ -189,6 +189,27 @@ def video_args() -> list[str]:
     return ["-vga", "virtio", "-usb", "-device", "usb-tablet"]
 
 
+def _firmware_share() -> Path:
+    return Path(shutil.which("qemu-system-aarch64") or "").resolve().parent.parent / "share" / "qemu"
+
+
+def reset_firmware_vars(vars_path: Path) -> bool:
+    """Restore a VM's UEFI NVRAM from the pristine template.
+
+    Repeatedly aborted boots corrupt the boot-order variables, after which
+    UEFI silently drops to its shell instead of booting the disk. Copying the
+    template back fixes it without touching the VM disk.
+    """
+    template = _firmware_share() / "edk2-arm-vars.fd"
+    if not template.exists():
+        template = _firmware_share() / "edk2-i386-vars.fd"
+    if not template.exists():
+        return False
+    vars_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(template, vars_path)
+    return True
+
+
 def uefi_args(spec: QemuSpec) -> list[str]:
     """Attach EDK2 firmware on aarch64, where ISO/disk images need UEFI.
 
@@ -199,7 +220,7 @@ def uefi_args(spec: QemuSpec) -> list[str]:
     """
     if host_arch() != "aarch64":
         return []
-    share = Path(shutil.which("qemu-system-aarch64") or "").resolve().parent.parent / "share" / "qemu"
+    share = _firmware_share()
     code = share / "edk2-aarch64-code.fd"
     if not code.exists():
         return []
