@@ -223,34 +223,106 @@ All three systems share the **same command line** and the **same GUI**
 
 ---
 
-## 📦 Install
+## 📥 Download
+Grab a standalone binary - no Python required.
+
+| Platform | File | Notes |
+|---|---|---|
+| 🍎 **macOS** (Apple Silicon) | `Sargatanas-v0.1.0-macos.app.zip` | Unzip, drag to Applications |
+| 🍎 **macOS** (CLI) | `sargatanas-v0.1.0-macos-arm64` | `chmod +x` and run |
+| 🐧 **Linux** x86_64 | `sargatanas-v0.1.0-linux-x86_64` | `chmod +x` and run |
+| 🪟 **Windows** x86_64 | `sargatanas-v0.1.0-windows-x86_64.exe` | Double-click |
+
+[**→ Latest release**](https://github.com/mildredhoe/sargantanas/releases/latest)
+
+**QEMU is not bundled.** It has to match your CPU, so install it once:
+
+```bash
+brew install qemu                              # macOS
+sudo apt install qemu-system-x86 qemu-utils    # Debian / Ubuntu
+sudo dnf install qemu-system-x86 qemu-img      # Fedora
+choco install qemu                             # Windows
+```
+
+### ⚠️ Unsigned binaries
+
+Builds are not code-signed or notarised:
+
+- **macOS**: right-click → **Open** the first time, or *System Settings →
+  Privacy & Security → Open Anyway*.
+- **Windows**: SmartScreen will warn - *More info → Run anyway*.
+
+Signing needs paid developer accounts (Apple $99/yr, Windows certificate).
+
+---
+
+## 🧑‍💻 Install from source
 
 | Step | Command |
 |------|---------|
-| 1. Requirements | See the table below |
+| 1. Requirements | Python 3.9+ and QEMU |
 | 2. Clone | `git clone https://github.com/mildredhoe/sargantanas && cd sargantanas` |
 | 3. Install | `pip install .` |
 | 4. Verify | `sargatanas status` |
 
-**Requirements:** Python 3.9+, QEMU (`qemu-system-*`), `qemu-img`.
-`psutil` is installed automatically as a dependency.
-
-```bash
-# macOS
-brew install qemu
-
-# Debian / Ubuntu
-sudo apt install qemu-system-x86 qemu-utils
-
-# Fedora
-sudo dnf install qemu-system-x86 qemu-img
-
-# Windows
-choco install qemu
-```
-
 Optional: **Tor** (`brew install tor` / `apt install tor`) and **WireGuard**
 (`brew install wireguard-tools` / `apt install wireguard`).
+
+---
+## 🖼️ Screenshots
+
+<table>
+<tr>
+<td width="50%">
+
+**Machines** - launch with any tier, double-click to boot
+
+![](docs/screenshots/machines.png)
+
+</td>
+<td width="50%">
+
+**Create** - blank disk, ISO or cloud image
+
+![](docs/screenshots/create.png)
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**Images** - download cloud images in one click
+
+![](docs/screenshots/images.png)
+
+</td>
+<td width="50%" valign="middle">
+
+**Profiles · Security · Network** - live status, firewall rules per tier,
+editable Tor/VPN settings.
+
+</td>
+</tr>
+</table>
+
+---
+
+## ⚡ Tor in four steps
+```bash
+sargatanas images pull alpine            # 182 MB, once
+sargatanas create darkvm --cloud alpine --profile tor
+sargatanas run darkvm                    # login: root / sargatanas
+```
+
+Inside the guest:
+
+```bash
+wget -qO- https://check.torproject.org/api/ip
+# {"IsTor":true,"IP":"192.42.116.16"}
+```
+
+Every outbound TCP connection, and DNS, leaves through Tor. **If Tor is not
+running, the VM refuses to boot** - it never starts unprotected.
 
 ---
 
@@ -331,14 +403,40 @@ control protocol and process management. They run on Linux, macOS and Windows.
 
 <div align="center">
 
+## ✅ What is verified
+
+| Area | Status |
+|---|---|
+| **Tor routing in-guest** | ✅ Booted a real Alpine VM; exit node confirmed (`{"IsTor":true}`) |
+| **CLI** | ✅ macOS + CI green on Linux and Windows |
+| **GUI** | ✅ Opened from source and from the packaged binary |
+| **Binaries** | ✅ Built for Linux, macOS and Windows by CI |
+| **Security tiers** | ✅ Argument construction covered by tests |
+| **VPN kill switch** | ⚠️ Linux-only code, never executed end to end |
+| **UDP over Tor** | ❌ Not supported (redsocks redirects TCP only) |
+| **Windows / Linux GUI** | ⚠️ Core is tested in CI; windows not opened there |
+| **Code signing** | ❌ Binaries unsigned (see Download) |
+
 ## ⚖️ Known limits
 
 What it explicitly does **not** do:
 
 | Limitation | Why |
-|------------|-----|
+|---|---|
 | Tor routing without a cloud image | A plain ISO has no cloud-init to apply the rules |
+| UDP (QUIC, UDP DNS) through Tor | redsocks redirects TCP only |
 | True **host-only** (VM↔host) | Requires `tap`/bridge with root |
-| **Kill switch** on macOS/Windows | Linux only (iptables) |
+| **Kill switch** on macOS/Windows | Implemented for Linux only |
+
+---
+
+<div align="center">
+
+## Credits
+
+Originally derived from [n01d-machine](https://github.com/bad-antics/n01d-machine)
+(MIT). The core has been rewritten from scratch.
+
+<sub>MIT licensed · see <a href="LICENSE">LICENSE</a></sub>
 
 </div>
