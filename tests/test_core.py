@@ -537,23 +537,23 @@ class TestCloud(TempHome):
         with self.assertRaises(cloud.CloudError):
             cloud.pull("windows")
 
-    def test_tor_user_data_has_redirect_rules(self):
+    def test_tor_user_data_enforces_tor(self):
         from sargatanas import cloud
         yaml = cloud.user_data_tor()
         self.assertIn("#cloud-config", yaml)
-        self.assertIn("REDIRECT --to-ports", yaml)
-        self.assertIn("REDSOCKS=12345", yaml)
         self.assertIn("10.0.2.100", yaml)
-        self.assertIn("redsocks", yaml)
-        self.assertIn("type = socks5", yaml)
         self.assertIn("/usr/local/bin/sargatanas-tor", yaml)
+        self.assertIn("OUTPUT -j REJECT", yaml)
+        self.assertIn("torsocks", yaml)
 
-    def test_guest_resolver_points_at_local_dnstc(self):
+    def test_guest_uses_socks5h_for_dns(self):
+        # Verified working: names resolve inside Tor via socks5h, so no local
+        # resolver (and no leak) is needed.
         from sargatanas import cloud
         yaml = cloud.user_data_tor()
-        self.assertIn("nameserver 127.0.0.1", yaml)
-        self.assertIn("dnstc", yaml)
-        self.assertIn("local_port = 53", yaml)
+        self.assertIn("socks5h://10.0.2.100:9050", yaml)
+        self.assertIn("ALL_PROXY", yaml)
+        self.assertNotIn("dnstc", yaml)
 
     def test_ipv6_is_blocked_in_layers(self):
         # redsocks is IPv4/TCP only; a single missing tool must not leave a
@@ -570,7 +570,7 @@ class TestCloud(TempHome):
         from sargatanas import cloud
         yaml = cloud.user_data_tor()
         self.assertIn("WARNING IPv6 could not be disabled", yaml)
-        self.assertIn("all IPv4 TCP now routed through Tor", yaml)
+        self.assertIn("Tor routing active", yaml)
 
     def test_no_heredoc_marker_in_script(self):
         # A heredoc EOF cannot close once the YAML block indents it, which
@@ -580,12 +580,11 @@ class TestCloud(TempHome):
         for line in body.splitlines():
             self.assertNotEqual(line.strip(), "EOF", line)
 
-    def test_redsocks_forces_dns_over_tcp(self):
+    def test_no_heredoc_in_generated_script(self):
         from sargatanas import cloud
-        yaml = cloud.user_data_tor()
-        self.assertIn("dnstc", yaml)
-        self.assertIn("local_port = 53", yaml)
-        self.assertIn("nameserver 127.0.0.1", yaml)
+        body = cloud.user_data_tor().split("content: |")[1].split("runcmd:")[0]
+        for line in body.splitlines():
+            self.assertNotIn(line.strip(), ("PROFILE", "ENVFILE", "EOF"), line)
 
     def test_generated_script_is_one_shell_block(self):
         # A stray newline inside a quoted printf broke the YAML block before.

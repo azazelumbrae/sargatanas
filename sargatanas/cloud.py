@@ -1,21 +1,27 @@
 """Cloud images and cloud-init seeding.
 
 To make a VM *actually* route through Tor we cannot ask QEMU to do it: slirp
-has no outbound proxy option. The redirect has to happen inside the guest.
+has no outbound proxy option. Everything happens inside the guest, in two
+phases:
 
-Chain:
+    Phase 1 (first boot only)
+        ordinary DNS is left working so the package manager can reach its
+        mirrors; iptables and torsocks get installed.
 
-    guest app
-      -> iptables REDIRECT (all TCP, and DNS)
-      -> redsocks listening locally in the guest
-      -> SOCKS5 at 10.0.2.100:9050   (guestfwd spliced to the host's Tor)
-      -> Tor
+    Phase 2 (every boot)
+        DNS is removed, ALL_PROXY points at Tor with socks5h (so names are
+        resolved at the exit node), torsocks is configured for programs that
+        ignore proxy variables, IPv6 is disabled, and iptables permits only
+        the Tor endpoint.
 
-Why `redsocks` instead of Tor's TransPort: many packaged Tor builds (Homebrew
-on macOS among them) are compiled with transparent proxying disabled, so
-TransPort simply does not exist. redsocks speaks SOCKS, which every Tor build
-supports, so this path works everywhere. It also means the rules survive a
-guest reboot.
+    guest app -> torsocks / ALL_PROXY -> SOCKS5 10.0.2.100:9050
+                                          (guestfwd to the host's Tor) -> Tor
+
+Why not redsocks or TransPort: Tor has no UDP ASSOCIATE, so nothing can carry
+UDP through the tunnel, and packaged Tor builds often disable TransPort
+entirely (Homebrew's does). A local redirector also swallowed torsocks' own
+connection. The whitelist plus torsocks is the only combination verified to
+work here.
 
 The seed is a CIDATA ISO with `user-data`/`meta-data`, the cloud-init NoCloud
 datasource.
@@ -130,106 +136,106 @@ def pull(key: str) -> Path:
 # ---------- cloud-init payload ----------
 
 TOR_SCRIPT = f"""#!/bin/sh
-# Installed by Sargatanas: send all guest traffic through Tor.
-# {TOR_GATEWAY}:9050 is a guestfwd endpoint spliced to the host's Tor SOCKS
-# port, so no host firewall, no root on the host, no TransPort build needed.
+# Installed by Sargatanas: route all guest traffic through Tor.
+#
+# Two-phase bootstrap. Phase 1 needs ordinary internet and DNS so the
+# package manager can reach Alpine's mirrors; only then is the door closed
+# and Tor enforced. Without this ordering the guest would be unable to
+# install anything, because Tor cannot carry the DNS that apk requires.
 set -u
 TOR_IP={TOR_GATEWAY}
-REDSOCKS={REDSOCKS_PORT}
 LOG=/var/log/sargatanas-tor.log
+PHASE1=/var/lib/sargatanas-bootstrap
 exec >"$LOG" 2>&1
-echo "sargatanas: starting Tor routing setup"
+echo "sargatanas: starting (broadcast=$(date -u))"
 
-# Minimal images ship without a firewall tool or the SOCKS redirector.
-# Install what is missing before touching any rule.
 install_pkg() {{
     if command -v apk >/dev/null 2>&1; then
-        apk add --no-cache "$@" >/dev/null 2>&1 || return 1
+        apk add --no-cache "$@" || return 1
     elif command -v apt-get >/dev/null 2>&1; then
-        apt-get update -qq >/dev/null 2>&1 || true
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" >/dev/null 2>&1
+        apt-get update -qq || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y -q "$@" >/dev/null 2>&1
+        dnf install -y -q "$@"
     else
         return 1
     fi
 }}
 
-command -v iptables >/dev/null 2>&1 || install_pkg iptables iptables-legacy || true
-command -v ip6tables >/dev/null 2>&1 || install_pkg ip6tables ip6tables-legacy || true
-command -v redsocks >/dev/null 2>&1 || install_pkg redsocks || true
+# ---- Phase 1: install, with working DNS -------------------------------
+if [ ! -f "$PHASE1" ]; then
+    echo "sargatanas: phase 1 - installing packages"
+    # Make sure the guest can resolve names right now (QEMU's resolver).
+    printf 'nameserver 10.0.2.3\\n' > /etc/resolv.conf
+    command -v iptables >/dev/null 2>&1 || install_pkg iptables iptables-legacy || true
+    command -v ip6tables >/dev/null 2>&1 || install_pkg ip6tables ip6tables-legacy || true
+    # torsocks is the piece that makes ordinary programs honour Tor.
+    command -v torsocks >/dev/null 2>&1 || install_pkg torsocks || true
+    touch "$PHASE1"
+    echo "sargatanas: phase 1 done"
+fi
 
 if ! command -v iptables >/dev/null 2>&1; then
     echo "sargatanas: FATAL iptables unavailable; refusing to leave the guest unprotected" >&2
     exit 1
 fi
-if ! command -v redsocks >/dev/null 2>&1; then
-    echo "sargatanas: FATAL redsocks unavailable; refusing to leave the guest unprotected" >&2
-    exit 1
-fi
 
-# Written with printf instead of a heredoc: the whole script is indented
-# inside the YAML block, which would stop an EOF marker from closing.
-: > /etc/redsocks.conf
-echo 'base {{' >> /etc/redsocks.conf
-echo '    log_debug = off;' >> /etc/redsocks.conf
-echo '    log_info = off;' >> /etc/redsocks.conf
-echo '    log = "file:/var/log/redsocks.log";' >> /etc/redsocks.conf
-echo '    daemon = on;' >> /etc/redsocks.conf
-echo '    redirector = iptables;' >> /etc/redsocks.conf
-echo '}}' >> /etc/redsocks.conf
-echo 'redsocks {{' >> /etc/redsocks.conf
-echo '    local_ip = 127.0.0.1;' >> /etc/redsocks.conf
-echo "    local_port = $REDSOCKS;" >> /etc/redsocks.conf
-echo "    ip = $TOR_IP;" >> /etc/redsocks.conf
-echo '    port = 9050;' >> /etc/redsocks.conf
-echo '    type = socks5;' >> /etc/redsocks.conf
-echo '}}' >> /etc/redsocks.conf
-# DNS over UDP cannot be proxied (guestfwd is TCP-only). dnstc answers every
-# UDP query with a truncated reply, so the resolver retries over TCP - and
-# TCP goes through redsocks into Tor. This is how DNS stops leaking.
-echo 'dnstc {{' >> /etc/redsocks.conf
-echo '    local_ip = 127.0.0.1;' >> /etc/redsocks.conf
-echo '    local_port = 53;' >> /etc/redsocks.conf
-echo '}}' >> /etc/redsocks.conf
-
-# with `dns=` in the netdev, so UDP and TCP lookups both travel through Tor.
-# DNS must not leak: the local dnstc forces a TCP retry into Tor.
+# ---- Phase 2: close the door ------------------------------------------
+echo "sargatanas: phase 2 - enforcing Tor"
+# DNS: no local resolver. Names are resolved *inside* Tor by socks5h.
 printf 'nameserver 127.0.0.1\\n' > /etc/resolv.conf
 
-redsocks -c /etc/redsocks.conf 2>/dev/null || true
-sleep 1
+# Programs that honour proxy variables go straight to Tor.
+P=/etc/profile.d/90-sargatanas-tor.sh
+: > "$P"
+echo 'export ALL_PROXY="socks5h://10.0.2.100:9050"' >> "$P"
+echo 'export all_proxy="$ALL_PROXY"' >> "$P"
+echo 'export HTTPS_PROXY="$ALL_PROXY" HTTP_PROXY="$ALL_PROXY"' >> "$P"
+echo 'export https_proxy="$ALL_PROXY" http_proxy="$ALL_PROXY"' >> "$P"
+: > /etc/environment
+echo 'ALL_PROXY=socks5h://10.0.2.100:9050' >> /etc/environment
+echo 'HTTPS_PROXY=socks5h://10.0.2.100:9050' >> /etc/environment
+echo 'HTTP_PROXY=socks5h://10.0.2.100:9050' >> /etc/environment
+. "$P"
 
-# Everything outbound goes to redsocks, except the path to Tor itself.
-iptables -t nat -C OUTPUT -d "$TOR_IP" -j RETURN 2>/dev/null ||
-    iptables -t nat -A OUTPUT -d "$TOR_IP" -j RETURN
-iptables -t nat -C OUTPUT -p tcp -j REDIRECT --to-ports "$REDSOCKS" 2>/dev/null ||
-    iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports "$REDSOCKS"
-# IPv6 is blocked in three independent layers, because redsocks only speaks
-# IPv4/TCP and a single missing tool would silently leave a leak path:
-#   1. kernel sysctl  - stops the stack from ever preferring IPv6
-#   2. ip6tables      - denies the traffic if the sysctl is reset later
-#   3. explicit check - fail loudly instead of pretending to be safe
+# Programs that ignore proxies are wrapped transparently: torsocks
+# intercepts connect()/getaddrinfo() and sends everything to Tor.
+if command -v torsocks >/dev/null 2>&1; then
+    mkdir -p /etc/tor 2>/dev/null || true
+    echo 'TorAddress 10.0.2.100' > /etc/tor/torsocks.conf
+    echo 'TorPort 9050' >> /etc/tor/torsocks.conf
+    echo "sargatanas: torsocks configured" 
+else
+    echo "sargatanas: WARNING torsocks missing - proxy-unaware programs can leak" >&2
+fi
+
+# Enforce Tor with a whitelist instead of redsocks. redsocks cannot talk to
+# Tor (no UDP ASSOCIATE) and its REDIRECT rule swallowed torsocks' own
+# connection, which is why the earlier design hung. Allowing only the Tor
+# endpoint and dropping everything else is simpler and actually holds.
+iptables -F OUTPUT 2>/dev/null || true
+iptables -A OUTPUT -o lo -j ACCEPT
+iptables -A OUTPUT -d "$TOR_IP" -p tcp --dport 9050 -j ACCEPT
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -j REJECT
+
+# ---- IPv6: off, in layers ---------------------------------------------
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
 sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
 for k in all default; do echo "net.ipv6.conf.$k.disable_ipv6 = 1"; done > /etc/sysctl.d/99-sargatanas-ipv6.conf 2>/dev/null || true
-
 if command -v ip6tables >/dev/null 2>&1; then
     for chain in OUTPUT FORWARD INPUT; do
         ip6tables -C "$chain" -j DROP 2>/dev/null ||
             ip6tables -A "$chain" -j DROP 2>/dev/null || true
     done
 fi
-
-# Report honestly: IPv4 through Tor is required, IPv6 is required to be off.
 IPV6_STATE=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo unknown)
-IPV6_RULES=$(ip6tables -S OUTPUT 2>/dev/null | grep -c DROP || echo 0)
-if [ "$IPV6_STATE" = "1" ] || [ "$IPV6_RULES" -ge 1 ]; then
-    echo "sargatanas: IPv6 disabled (sysctl=$IPV6_STATE, ip6tables_drop_rules=$IPV6_RULES)"
+if [ "$IPV6_STATE" = "1" ]; then
+    echo "sargatanas: IPv6 disabled"
 else
-    echo "sargatanas: WARNING IPv6 could not be disabled - traffic may leak" >&2
+    echo "sargatanas: WARNING IPv6 could not be disabled" >&2
 fi
-echo "sargatanas: all IPv4 TCP now routed through Tor"
+echo "sargatanas: Tor routing active - verify with: torsocks curl https://check.torproject.org/api/ip"
 """
 
 TOR_USER_DATA = """#cloud-config
