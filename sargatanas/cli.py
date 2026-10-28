@@ -419,6 +419,10 @@ def cmd_security(_: argparse.Namespace) -> int:
     print(f"    WireGuard  : {'installed' if prov['wireguard'] else 'missing'}")
     print(f"    OpenVPN    : {'installed' if prov['openvpn'] else 'missing'}")
     print(f"    Seccomp    : {color('available', GREEN) if qemu.sandbox_supported() else color('unavailable on this QEMU', DIM)}")
+    if cfg.network.random_mac:
+        print(f"    MAC        : {color('random per boot', GREEN)}")
+    else:
+        print(f"    MAC        : {cfg.network.mac or 'QEMU default (52:54:00:12:34:56)'}")
     print()
     print(f"  {color('Isolation modes', BOLD)}")
     for mode, desc in profiles.ISOLATION_MODES.items():

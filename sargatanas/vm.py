@@ -233,10 +233,17 @@ def start(name: str, *, live: bool = False, install: bool = False,
         read_only=live,
         firmware_vars=Path(vm.disk).parent / "efi-vars.fd",
     )
+    mac = None
+    if cfg.network.random_mac:
+        mac = profiles.random_mac()
+    elif cfg.network.mac:
+        mac = cfg.network.mac
+
     argv = qemu.build_argv(spec) + profiles.qemu_network_args(
         prof,
         forwards=cfg.network.forwards,
         socks_port=cfg.tor.socks_port,
+        mac=mac,
         trans_port=cfg.tor.trans_port,
         dns_port=cfg.tor.dns_port,
     ) + extra

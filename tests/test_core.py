@@ -250,6 +250,29 @@ class TestProfiles(unittest.TestCase):
         args = self.net("vpn", forwards=["2222:22"])
         self.assertIn("hostfwd=tcp::2222-:22", args[1])
 
+    def test_random_mac_is_locally_administered_and_unicast(self):
+        for _ in range(20):
+            mac = profiles.random_mac()
+            parts = mac.split(":")
+            self.assertEqual(len(parts), 6)
+            first = int(parts[0], 16)
+            self.assertEqual(first & 0x02, 0x02)   # locally administered
+            self.assertEqual(first & 0x01, 0x00)   # unicast
+
+    def test_random_mac_changes_every_call(self):
+        self.assertNotEqual(profiles.random_mac(), profiles.random_mac())
+
+    def test_mac_reaches_the_device(self):
+        args = self.net("nat", mac="02:aa:bb:cc:dd:ee")
+        self.assertIn("mac=02:aa:bb:cc:dd:ee", " ".join(args))
+
+    def test_mac_in_tor_guestfwd_device(self):
+        args = self.net("tor", mac="02:aa:bb:cc:dd:ee")
+        self.assertIn("mac=02:aa:bb:cc:dd:ee", " ".join(args))
+
+    def test_no_mac_means_qemu_default(self):
+        self.assertNotIn("mac=", " ".join(self.net("nat")))
+
     def test_unknown_profile_raises(self):
         with self.assertRaises(KeyError):
             profiles.get("nope")

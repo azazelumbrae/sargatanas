@@ -43,6 +43,11 @@ class VmConfig:
 class NetworkDefaults:
     # "nat" | "isolated" | "none"
     mode: str = "nat"
+    # A fresh MAC per boot defeats cross-session fingerprinting. Turn off if
+    # you rely on a stable MAC (DHCP reservations, licence binding).
+    random_mac: bool = True
+    # Used only when random_mac is False.
+    mac: str | None = None
     # Host forwards for user-mode NAT, as "host:guest"
     forwards: list[str] = field(default_factory=lambda: ["2222:22"])
 
@@ -255,7 +260,19 @@ def update_network(cfg: Config, **changes: Any) -> Config:
         cfg.network.mode = mode
     if "forwards" in changes:
         cfg.network.forwards = _forwards(list(changes["forwards"]))
+    if "random_mac" in changes:
+        cfg.network.random_mac = bool(changes["random_mac"])
+    if "mac" in changes:
+        value = (changes["mac"] or "").strip() or None
+        if value and not _valid_mac(value):
+            raise SettingsError(f"'{value}' is not a valid MAC address (aa:bb:cc:dd:ee:ff)")
+        cfg.network.mac = value
     return cfg
+
+
+def _valid_mac(value: str) -> bool:
+    import re
+    return bool(re.fullmatch(r"[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}", value))
 
 
 def update_defaults(cfg: Config, **changes: Any) -> Config:

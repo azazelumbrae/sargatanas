@@ -646,6 +646,7 @@ class App(tk.Tk):
         self.vpn_iface = tk.StringVar(value=self.cfg.vpn.interface or "")
         self.forwards = tk.StringVar(value="\n".join(self.cfg.network.forwards))
         self.killswitch = tk.BooleanVar(value=self.cfg.vpn.kill_switch)
+        self.random_mac = tk.BooleanVar(value=self.cfg.network.random_mac)
         self.def_ram = tk.StringVar(value=str(self.cfg.default_ram))
         self.def_cpus = tk.StringVar(value=str(self.cfg.default_cpus))
         self.def_disk = tk.StringVar(value=str(self.cfg.default_disk_gb))
@@ -676,22 +677,25 @@ class App(tk.Tk):
         cell(5, 1, "Interface", ttk.Entry(form, textvariable=self.vpn_iface))
         ttk.Checkbutton(form, text="Kill switch enabled", variable=self.killswitch).grid(
             row=6, column=0, columnspan=4, sticky="w", pady=5)
+        ttk.Checkbutton(form, text="Random MAC on every boot (defeats fingerprinting)",
+                        variable=self.random_mac).grid(row=7, column=0, columnspan=4,
+                                                       sticky="w", pady=5)
 
         tk.Label(form, text="Network", bg=BG, fg=ACCENT, font=("", 12, "bold")).grid(
-            row=7, column=0, columnspan=4, sticky="w", pady=(10, 4))
+            row=8, column=0, columnspan=4, sticky="w", pady=(10, 4))
         tk.Label(form, text="Port forwards\n(host:guest)", bg=BG, fg=TEXT).grid(
-            row=8, column=0, sticky="nw", pady=5)
+            row=9, column=0, sticky="nw", pady=5)
         self.fwd_text = tk.Text(form, bg=FIELD, fg=TEXT, height=3, relief="flat",
                                 padx=8, pady=6)
         self.fwd_text.insert("1.0", self.forwards.get())
-        self.fwd_text.grid(row=8, column=1, columnspan=3, sticky="ew", pady=5)
+        self.fwd_text.grid(row=9, column=1, columnspan=3, sticky="ew", pady=5)
 
         tk.Label(form, text="Defaults", bg=BG, fg=ACCENT, font=("", 12, "bold")).grid(
-            row=9, column=0, columnspan=4, sticky="w", pady=(10, 4))
-        cell(10, 0, "RAM (MB)", ttk.Entry(form, textvariable=self.def_ram, width=10))
-        cell(10, 1, "CPUs", ttk.Entry(form, textvariable=self.def_cpus, width=10))
-        cell(11, 0, "Disk (GB)", ttk.Entry(form, textvariable=self.def_disk, width=10))
-        cell(11, 1, "Default tier", ttk.Combobox(form, textvariable=self.def_profile,
+            row=10, column=0, columnspan=4, sticky="w", pady=(10, 4))
+        cell(11, 0, "RAM (MB)", ttk.Entry(form, textvariable=self.def_ram, width=10))
+        cell(11, 1, "CPUs", ttk.Entry(form, textvariable=self.def_cpus, width=10))
+        cell(12, 0, "Disk (GB)", ttk.Entry(form, textvariable=self.def_disk, width=10))
+        cell(12, 1, "Default tier", ttk.Combobox(form, textvariable=self.def_profile,
                                                  values=list(profiles.PROFILES),
                                                  state="readonly"))
 
@@ -714,7 +718,8 @@ class App(tk.Tk):
             config.update_vpn(self.cfg, provider=self.vpn_provider.get(),
                               interface=self.vpn_iface.get(),
                               kill_switch=self.killswitch.get())
-            config.update_network(self.cfg, forwards=forwards)
+            config.update_network(self.cfg, forwards=forwards,
+                                  random_mac=self.random_mac.get())
             config.update_defaults(self.cfg, default_ram=self.def_ram.get(),
                                    default_cpus=self.def_cpus.get(),
                                    default_disk_gb=self.def_disk.get(),
@@ -738,6 +743,7 @@ class App(tk.Tk):
         self.vpn_provider.set(self.cfg.vpn.provider or "")
         self.vpn_iface.set(self.cfg.vpn.interface or "")
         self.killswitch.set(self.cfg.vpn.kill_switch)
+        self.random_mac.set(self.cfg.network.random_mac)
         self.fwd_text.delete("1.0", "end")
         self.fwd_text.insert("1.0", "\n".join(self.cfg.network.forwards))
         self.def_ram.set(str(self.cfg.default_ram))

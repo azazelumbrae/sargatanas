@@ -29,6 +29,7 @@ What QEMU's userspace (slirp) backend can and cannot do - stated, not faked:
 from __future__ import annotations
 
 import platform
+import secrets
 import shutil
 import socket
 import subprocess
@@ -244,8 +245,24 @@ def check_launch(profile: Profile, *, socks_port: int = 9050,
 
 # ---------- QEMU networking ----------
 
+def random_mac() -> str:
+    """A locally-administered unicast MAC, fresh on every boot.
+
+    QEMU otherwise reuses 52:54:00:12:34:56 for every VM, which is a stable
+    fingerprint. The 02 prefix marks it as locally administered, so it cannot
+    collide with a real vendor OUI.
+    """
+    octets = [0x02] + [secrets.randbits(8) for _ in range(5)]
+    return ":".join(f"{b:02x}" for b in octets)
+
+
+def _device(net_id: str, mac: str | None) -> str:
+    base = f"virtio-net-pci,netdev={net_id}"
+    return f"{base},mac={mac}" if mac else base
+
+
 def _user_netdev(net_id: str, forwards: list[str] | None = None,
-                 restrict: bool = False) -> list[str]:
+                 restrict: bool = False, mac: str | None = None) -> list[str]:
     opts = [f"user,id={net_id}"]
     if restrict:
         opts.append("restrict=yes")
@@ -253,7 +270,7 @@ def _user_netdev(net_id: str, forwards: list[str] | None = None,
         fwd = ",".join(f"hostfwd=tcp::{f.replace(':', '-:', 1)}" for f in forwards)
         opts.append(fwd)
     netdev = ",".join(opts)
-    return ["-netdev", netdev, "-device", f"virtio-net-pci,netdev={net_id}"]
+    return ["-netdev", netdev, "-device", _device(net_id, mac)]
 
 
 def _internal_netdev(net_id: str) -> list[str]:
@@ -264,7 +281,7 @@ def _internal_netdev(net_id: str) -> list[str]:
 TOR_ENDPOINT = "10.0.2.100"
 
 
-def tor_guestfwd_args(socks_port: int = 9050) -> list[str]:
+def tor_guestfwd_args(socks_port: int = 9050, mac: str | None = None) -> list[str]:
     """Expose the host's Tor SOCKS port inside the guest, without root.
 
     QEMU's user networking has no outbound-proxy option, so we push the
@@ -274,11 +291,12 @@ def tor_guestfwd_args(socks_port: int = 9050) -> list[str]:
     """
     cmd = f"guestfwd=tcp:{TOR_ENDPOINT}:9050-cmd:nc 127.0.0.1 {socks_port}"
     return ["-netdev", f"user,id=net0,{cmd}",
-            "-device", "virtio-net-pci,netdev=net0"]
+            "-device", _device("net0", mac)]
 
 
 def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
-                      socks_port: int = 9050, **_ignored: object) -> list[str]:
+                      socks_port: int = 9050, mac: str | None = None,
+                      **_ignored: object) -> list[str]:
     """Translate a profile into QEMU networking arguments.
 
     For `tor`/`stealth` the guest gets no inbound ports and the Tor endpoints
@@ -289,15 +307,15 @@ def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
     if net == "none":
         return []
     if net == "nat":
-        return _user_netdev("net0", forwards)
+        return _user_netdev("net0", forwards, mac=mac)
     if net == "restricted":
-        return _user_netdev("net0", restrict=True)
+        return _user_netdev("net0", restrict=True, mac=mac)
     if net == "internal":
         return _internal_netdev("net0")
     if net == "tor":
-        return tor_guestfwd_args(socks_port)
+        return tor_guestfwd_args(socks_port, mac=mac)
     if net == "vpn":
-        return _user_netdev("net0", forwards)
+        return _user_netdev("net0", forwards, mac=mac)
     if net == "pentesting":
-        return _internal_netdev("net0") + _user_netdev("net1", forwards)
+        return _internal_netdev("net0") + _user_netdev("net1", forwards, mac=mac)
     raise ValueError(f"Unhandled network type {net}")

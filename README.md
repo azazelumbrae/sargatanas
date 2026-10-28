@@ -430,6 +430,16 @@ What it explicitly does **not** do:
 | Tor routing without a cloud image | A plain ISO has no cloud-init to apply the rules |
 | UDP (QUIC, UDP DNS) through Tor | redsocks redirects TCP only |
 | IPv6 through Tor | Not supported - IPv6 is disabled inside the guest instead |
+
+## 🎭 MAC address randomisation
+
+QEMU hands every VM the same MAC (`52:54:00:12:34:56`) on every boot, which
+is a stable fingerprint across sessions. Sargatanas generates a fresh
+**locally administered** address (`02:xx:…`) for each launch instead.
+
+Turn it off in **Network → Random MAC on every boot**, or set a fixed MAC in
+`config.json` (`network.random_mac: false`, `network.mac: "…"`) when you need
+DHCP reservations or licence binding.
 | True **host-only** (VM↔host) | Requires `tap`/bridge with root |
 | **Kill switch** on macOS/Windows | Implemented for Linux only |
 
