@@ -171,8 +171,8 @@ def start(name: str, *, live: bool = False, install: bool = False,
 
     iso = Path(vm.iso) if vm.iso else None
     boot = "d" if (live or install) else "c"
-    extra = list(prof.extra_qemu_args)
-    if qemu.sandbox_supported():
+    extra: list[str] = []
+    if prof.sandbox and qemu.sandbox_supported():
         extra += ["-sandbox", "on"]
 
     # Start with the profile's guest networking only. build_argv() does not

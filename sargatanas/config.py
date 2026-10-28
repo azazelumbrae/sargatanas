@@ -51,6 +51,8 @@ class NetworkDefaults:
 class TorSettings:
     socks_port: int = 9050
     control_port: int = 9051
+    dns_port: int = 5353
+    trans_port: int = 9040
     control_password: str | None = None
     bridges: list[str] = field(default_factory=list)
     exit_nodes: str | None = None

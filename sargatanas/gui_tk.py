@@ -88,6 +88,8 @@ class App(tk.Tk):
         nb.add(self._create_tab(), text="  Create  ")
         nb.add(self._isos_tab(), text="  ISOs  ")
         nb.add(self._profiles_tab(), text="  Profiles  ")
+        nb.add(self._security_tab(), text="  Security  ")
+        nb.add(self._network_tab(), text="  Network  ")
 
         self.status_var = tk.StringVar(value="Ready")
         status = ttk.Label(self, textvariable=self.status_var, style="Status.TLabel", anchor="w")
@@ -188,6 +190,63 @@ class App(tk.Tk):
                 box.insert("end", f"    · {limit}\n")
             box.insert("end", "\n")
         box.insert("end", "A profile that cannot be verified refuses to start.\n")
+        box.configure(state="disabled")
+        return frame
+
+    def _security_tab(self) -> ttk.Frame:
+        """Security Center: protections status + tiers with their firewall rules."""
+        from . import vpn as vpn_mod
+        frame = ttk.Frame()
+        box = tk.Text(frame, bg=BG, fg=TEXT, relief="flat", wrap="word",
+                      font=("Menlo", 12), padx=14, pady=14)
+        box.pack(fill="both", expand=True)
+
+        cfg = self.cfg
+        tor_up = profiles.tor_socks_reachable(port=cfg.tor.socks_port)
+        prov = vpn_mod.installed_providers()
+        box.insert("end", "Protections\n")
+        box.insert("end", f"  Tor SOCKS   : {'up' if tor_up else 'down'} "
+                          f"({'installed' if profiles.tor_installed() else 'missing'})\n")
+        box.insert("end", f"  WireGuard   : {'installed' if prov['wireguard'] else 'missing'}\n")
+        box.insert("end", f"  OpenVPN     : {'installed' if prov['openvpn'] else 'missing'}\n")
+        box.insert("end", f"  Seccomp     : {'available' if qemu.sandbox_supported() else 'unavailable'}\n\n")
+
+        box.insert("end", "Isolation modes\n")
+        for mode, desc in profiles.ISOLATION_MODES.items():
+            box.insert("end", f"  {mode:<12} {desc}\n")
+        box.insert("end", "\nTiers\n")
+        for key, prof in profiles.PROFILES.items():
+            box.insert("end", f"  {key} - {prof.summary}\n")
+            for rule in prof.firewall_rules():
+                box.insert("end", f"      · {rule}\n")
+        box.configure(state="disabled")
+        return frame
+
+    def _network_tab(self) -> ttk.Frame:
+        """Network configuration: isolation modes + Tor/VPN settings."""
+        frame = ttk.Frame()
+        box = tk.Text(frame, bg=BG, fg=TEXT, relief="flat", wrap="word",
+                      font=("Menlo", 12), padx=14, pady=14)
+        box.pack(fill="both", expand=True)
+        cfg = self.cfg
+        box.insert("end", "Tor\n")
+        box.insert("end", f"  SOCKS : {cfg.tor.socks_port}   Control: {cfg.tor.control_port}   "
+                          f"DNS: {cfg.tor.dns_port}\n")
+        if cfg.tor.bridges:
+            box.insert("end", f"  Bridges: {len(cfg.tor.bridges)} configured\n")
+        if cfg.tor.exit_nodes:
+            box.insert("end", f"  Exit nodes: {cfg.tor.exit_nodes}\n")
+        box.insert("end", "\nVPN\n")
+        box.insert("end", f"  Provider : {cfg.vpn.provider or '(not set)'}\n")
+        box.insert("end", f"  Interface: {cfg.vpn.interface or '(not set)'}\n")
+        if cfg.vpn.interface:
+            up = profiles.vpn_interface_up(cfg.vpn.interface)
+            box.insert("end", f"  State    : {'up' if up else 'down'}\n")
+        box.insert("end", "\nPort forwards (nat / pentesting):\n")
+        for fwd in cfg.network.forwards:
+            box.insert("end", f"  host:{fwd}\n")
+        box.insert("end",
+                   "\nThese are view-only; edit ~/Sargatanas/config.json to change them.\n")
         box.configure(state="disabled")
         return frame
 

@@ -255,6 +255,89 @@ def cmd_tor(args: argparse.Namespace) -> int:
         print(f"  SOCKS 127.0.0.1:{cfg.tor.socks_port}: "
               f"{color('up', GREEN) if up else color('down', RED)}")
         return 0 if up else 1
+    if args.command == "config":
+        from . import torcfg
+        text = torcfg.generate_torrc(cfg.tor)
+        out = getattr(args, "output", None)
+        if out:
+            torcfg.write_torrc(cfg.tor, Path(out).expanduser())
+            print(color(f"[+] torrc written to {out}", GREEN))
+            print(color(f"    Review it, then start Tor with: tor -f {out}", DIM))
+        else:
+            print(text)
+        return 0
+    return 0
+
+
+def cmd_vpn(args: argparse.Namespace) -> int:
+    from . import vpn
+    cfg = config.load()
+    if args.vpn_command == "status":
+        prov = vpn.installed_providers()
+        print(f"  WireGuard : {color('installed', GREEN) if prov['wireguard'] else color('missing', YELLOW)}")
+        print(f"  OpenVPN   : {color('installed', GREEN) if prov['openvpn'] else color('missing', YELLOW)}")
+        iface = cfg.vpn.interface
+        print(f"  Interface : {iface or color('(not configured)', DIM)}")
+        if iface:
+            up = profiles.vpn_interface_up(iface)
+            print(f"  State     : {color('up', GREEN) if up else color('down', RED)}")
+        print(f"  Kill switch: {color('available (Linux+iptables)', GREEN) if vpn.kill_switch_supported() else color('not available on this OS', DIM)}")
+        return 0
+    if args.vpn_command == "wireguard-config":
+        print(vpn.wireguard_config_template(cfg.vpn))
+        return 0
+    if args.vpn_command == "openvpn-config":
+        print(vpn.openvpn_config_template(cfg.vpn))
+        return 0
+    if args.vpn_command == "kill-switch":
+        iface = args.interface or cfg.vpn.interface
+        try:
+            if args.action == "on":
+                print(color("[!] Host-wide policy: it cuts internet if the tunnel drops.", YELLOW))
+                cmds = vpn.install_kill_switch(iface)
+            else:
+                cmds = vpn.remove_kill_switch(iface)
+        except vpn.VpnError as exc:
+            print(color(f"[-] {exc}", RED))
+            return 1
+        for c in cmds:
+            print(f"    {c}")
+        print(color(f"[+] Kill switch {'enabled' if args.action == 'on' else 'removed'} for {iface}", GREEN))
+        return 0
+    return 0
+
+
+def cmd_firewall(args: argparse.Namespace) -> int:
+    prof = profiles.get(args.profile)
+    banner()
+    print(f"  {color(prof.key, CYAN)} - {prof.summary}")
+    print()
+    for rule in prof.firewall_rules():
+        print(f"    · {rule}")
+    print()
+    print(color("  These rules are enforced by QEMU's network backend at launch.", DIM))
+    return 0
+
+
+def cmd_security(_: argparse.Namespace) -> int:
+    from . import vpn
+    cfg = config.load()
+    banner()
+    print(f"  {color('Protections', BOLD)}")
+    tor_up = profiles.tor_socks_reachable(port=cfg.tor.socks_port)
+    print(f"    Tor SOCKS  : {color('up', GREEN) if tor_up else color('down', YELLOW)} "
+          f"({'installed' if profiles.tor_installed() else 'not installed'})")
+    prov = vpn.installed_providers()
+    print(f"    WireGuard  : {'installed' if prov['wireguard'] else 'missing'}")
+    print(f"    OpenVPN    : {'installed' if prov['openvpn'] else 'missing'}")
+    print(f"    Seccomp    : {color('available', GREEN) if qemu.sandbox_supported() else color('unavailable on this QEMU', DIM)}")
+    print()
+    print(f"  {color('Isolation modes', BOLD)}")
+    for mode, desc in profiles.ISOLATION_MODES.items():
+        print(f"    {color(mode, CYAN):<12} {desc}")
+    print()
+    print(f"  {color('Tiers', BOLD)}  (see 'sargatanas profiles' and 'sargatanas firewall <profile>')")
+    print(f"    {color('paranoid > isolated > stealth > tor/vpn > pentesting > nat > restricted', DIM)}")
     return 0
 
 
@@ -375,6 +458,13 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("profiles", help="Explain the security profiles")
     s.set_defaults(func=cmd_profiles)
 
+    s = sub.add_parser("security", help="Security center: protections, modes, status")
+    s.set_defaults(func=cmd_security)
+
+    s = sub.add_parser("firewall", help="Show the firewall rules a profile enforces")
+    s.add_argument("profile", choices=list(profiles.PROFILES))
+    s.set_defaults(func=cmd_firewall)
+
     s = sub.add_parser("status", help="Host and tooling status")
     s.set_defaults(func=cmd_status)
 
@@ -388,11 +478,23 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("snapshot")
     s.set_defaults(func=cmd_restore)
 
-    s = sub.add_parser("tor", help="Tor control actions")
-    tor_sub = s.add_subparsers(dest="tor_command")
+    s = sub.add_parser("tor", help="Tor control and config")
+    tor_sub = s.add_subparsers(dest="command")
     tor_sub.add_parser("identity", help="Ask Tor for a new circuit")
     tor_sub.add_parser("check", help="Check the SOCKS port")
-    s.set_defaults(func=cmd_tor, command="tor")
+    tor_cfg = tor_sub.add_parser("config", help="Generate a torrc (bridges, exit nodes, DNS)")
+    tor_cfg.add_argument("--output", help="Write to a file instead of stdout")
+    s.set_defaults(func=cmd_tor)
+
+    s = sub.add_parser("vpn", help="VPN status, configs and kill switch")
+    vpn_sub = s.add_subparsers(dest="vpn_command")
+    vpn_sub.add_parser("status", help="VPN tools and tunnel status")
+    vpn_sub.add_parser("wireguard-config", help="Print a WireGuard config template")
+    vpn_sub.add_parser("openvpn-config", help="Print an OpenVPN config template")
+    ks = vpn_sub.add_parser("kill-switch", help="Enable/remove the OpenVPN kill switch (Linux)")
+    ks.add_argument("action", choices=["on", "off"])
+    ks.add_argument("--interface", help="Tunnel interface (default: config or tun0)")
+    s.set_defaults(func=cmd_vpn)
 
     s = sub.add_parser("gui", help="Launch the graphical interface (Tkinter)")
     s.add_argument("--gtk", action="store_true", help="Use the GTK interface instead")

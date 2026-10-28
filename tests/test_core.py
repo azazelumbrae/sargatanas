@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from sargatanas import config, paths, profiles, qemu, torctl, vm
+from sargatanas import config, paths, profiles, qemu, torcfg, torctl, vm, vpn
 
 
 class TempHome(unittest.TestCase):
@@ -177,10 +177,39 @@ class TestProfiles(unittest.TestCase):
         args = self.net("nat", forwards=["2222:22"])
         self.assertIn("hostfwd=tcp::2222-:22", args[1])
 
-    def test_host_only_restricts(self):
-        args = self.net("host-only")
+    def test_restricted_isolates(self):
+        args = self.net("restricted")
         self.assertIn("restrict=yes", args[1])
         self.assertNotIn("hostfwd", args[1])
+
+    def test_pentesting_has_two_nics(self):
+        # internal VM<->VM (multicast) + NAT internet for tools
+        args = self.net("pentesting", forwards=["2222:22"])
+        self.assertIn("socket,id=net0,mcast=", args[1])
+        self.assertIn("hostfwd=tcp::2222-:22", args[5])
+        self.assertEqual(args.count("-netdev"), 2)
+
+    def test_paranoid_is_airgapped_and_sandboxed(self):
+        prof = profiles.get("paranoid")
+        self.assertEqual(self.net("paranoid"), [])
+        self.assertTrue(prof.sandbox)
+
+    def test_stealth_needs_tor_and_vpn(self):
+        prof = profiles.get("stealth")
+        self.assertIn("tor-socks", prof.needs)
+        self.assertIn("vpn-interface", prof.needs)
+
+    def test_firewall_rules_are_honest(self):
+        for key in ("paranoid", "isolated", "stealth", "tor", "vpn",
+                    "pentesting", "nat", "restricted"):
+            rules = profiles.get(key).firewall_rules()
+            self.assertTrue(rules, key)
+
+    def test_stealth_blocks_when_tor_down(self):
+        with mock.patch.object(profiles, "tor_socks_reachable", return_value=False), \
+             mock.patch.object(profiles, "vpn_interface_up", return_value=True):
+            check = profiles.check_launch(profiles.get("stealth"), vpn_interface="wg0")
+        self.assertFalse(check.ok)
 
     def test_tor_has_no_hostfwd_and_no_socks(self):
         # The invalid `socks=` option was removed; tor is a guard that boots
@@ -223,7 +252,7 @@ class TestProfiles(unittest.TestCase):
     def test_every_profile_has_limits_documented_or_is_plain(self):
         # Guards against a future profile claiming magic with no caveat.
         for prof in profiles.PROFILES.values():
-            if prof.key in ("tor", "vpn", "host-only"):
+            if prof.key in ("tor", "vpn", "stealth", "pentesting", "restricted"):
                 self.assertTrue(prof.describe_limits(), prof.key)
 
 
@@ -285,7 +314,7 @@ class TestVm(TempHome):
 
     def test_sandbox_added_when_supported(self):
         with mock.patch("sargatanas.qemu.create_disk"):
-            vm.create("s", profile="isolated")
+            vm.create("s", profile="paranoid")
         with mock.patch.object(qemu, "sandbox_supported", return_value=True), \
              mock.patch("sargatanas.qemu.spawn") as spawn:
             spawn.return_value = mock.Mock(pid=4242)
@@ -296,7 +325,7 @@ class TestVm(TempHome):
 
     def test_sandbox_omitted_when_unsupported(self):
         with mock.patch("sargatanas.qemu.create_disk"):
-            vm.create("s2", profile="isolated")
+            vm.create("s2", profile="paranoid")
         with mock.patch.object(qemu, "sandbox_supported", return_value=False), \
              mock.patch("sargatanas.qemu.spawn") as spawn:
             spawn.return_value = mock.Mock(pid=4242)
@@ -348,6 +377,38 @@ class TestProcess(unittest.TestCase):
              mock.patch.object(qemu.psutil, "Process", return_value=proc):
             self.assertTrue(qemu.terminate(42, force=True))
         proc.kill.assert_called_once()
+
+
+class TestTorConfig(unittest.TestCase):
+    def test_torrc_has_dns_leak_protection(self):
+        text = torcfg.generate_torrc(config.TorSettings())
+        self.assertIn("DNSPort 5353", text)
+        self.assertIn("AutomapHostsOnResolve 1", text)
+        self.assertIn("VirtualAddrNetworkIPv4 10.192.0.0/10", text)
+        self.assertIn("TransPort 9040", text)
+
+    def test_torrc_bridges_and_exit_nodes(self):
+        settings = config.TorSettings(
+            bridges=["obfs4 1.2.3.4:443 ABC"], exit_nodes="{us}", strict_nodes=True)
+        text = torcfg.generate_torrc(settings)
+        self.assertIn("UseBridges 1", text)
+        self.assertIn("Bridge obfs4 1.2.3.4:443 ABC", text)
+        self.assertIn("ExitNodes {us}", text)
+        self.assertIn("StrictNodes 1", text)
+
+
+class TestVpn(unittest.TestCase):
+    def test_wireguard_template_is_a_kill_switch(self):
+        text = vpn.wireguard_config_template(config.VpnSettings(interface="wg0"))
+        self.assertIn("AllowedIPs = 0.0.0.0/0", text)
+
+    def test_kill_switch_commands_are_iptables(self):
+        cmds = vpn.kill_switch_commands("wg0")
+        self.assertTrue(any("wg0" in c for c in cmds))
+        self.assertTrue(all(c.startswith("iptables") for c in cmds))
+
+    def test_installed_providers_shape(self):
+        self.assertEqual(set(vpn.installed_providers()), {"wireguard", "openvpn"})
 
 
 class TestTorControl(unittest.TestCase):

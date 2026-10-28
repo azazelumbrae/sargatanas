@@ -20,7 +20,7 @@ labels: bug
 - QEMU version (`qemu-system-x86_64 --version` or `qemu-system-aarch64`):
 - Sargatanas version (`sargatanas --version`):
 
-**Profile in use** (isolated / nat / host-only / tor / vpn)
+**Profile in use** (paranoid / isolated / stealth / tor / vpn / pentesting / nat / restricted)
 
 **Output of `sargatanas status`**
 ```

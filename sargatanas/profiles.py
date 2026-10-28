@@ -1,27 +1,29 @@
-"""Security profiles - honest about what each one actually enforces.
+"""Security profiles - the full tier set, honestly enforced.
+
+Tiers, from most closed to most open:
+
+    paranoid     air-gapped + seccomp sandbox
+    isolated     air-gapped (no network device)
+    stealth      requires Tor SOCKS AND a VPN interface; outbound-only
+    tor          requires Tor SOCKS; outbound-only
+    vpn          requires a VPN interface; NAT egress
+    pentesting   internal VM<->VM network + NAT internet for tools
+    nat          NAT with port forwards (default)
+    restricted   NIC present but isolated from host and internet
 
 The rule for this module: a profile may only claim a protection that is
-implemented by code you can run *today* on the host you are on. Anything
-that needs root, a real Tor circuit or a real VPN tunnel is reported as
-"unavailable" or "not implemented", never silently pretended.
+implemented by code you can run *today* on the host you are on. Anything that
+needs root, a real Tor circuit or a real VPN tunnel is either verified at
+launch or reported as "not implemented", never silently pretended.
 
-What each profile does today:
+What QEMU's userspace (slirp) backend can and cannot do - stated, not faked:
 
-    isolated    no network device at all -> air-gapped. Works everywhere.
-    nat         QEMU user networking with port forwards. Default.
-    host-only   user networking with restrict=yes: guest cannot reach the
-                host or the LAN, outbound internet still works.
-    tor         a guard: verifies a Tor SOCKS listener is up, then boots
-                with outbound-only user networking (no inbound ports). It
-                does NOT transparently redirect guest traffic - the guest
-                must point its own applications at the host Tor proxy.
-    vpn         a guard: verifies the tunnel interface is up, then boots
-                with normal user networking. Guest egress follows the
-                host's VPN. No kill switch is implemented yet.
-
-Seccomp: QEMU's `-sandbox on` is only available in QEMU builds that enable
-it (Linux with libseccomp). It is probed at runtime and applied where
-supported; on other platforms it is neither applied nor claimed.
+    * air-gap, NAT, isolated NIC, and VM<->VM multicast all work without root.
+    * true "host-only" (guest<->host, no internet) needs a tap/bridge -> root.
+    * transparent "route everything through Tor" needs a dedicated gateway
+      (Whonix/Tails) or host-side redsocks + iptables (root). We do not claim
+      it; the `tor`/`stealth` profiles verify Tor/VPN is up and boot with
+      outbound-only networking instead.
 """
 
 from __future__ import annotations
@@ -34,63 +36,133 @@ from dataclasses import dataclass, field
 
 from . import qemu
 
+INTERNAL_MCAST = "230.0.0.1:1234"
+
 
 @dataclass(frozen=True)
 class Profile:
     key: str
     summary: str
-    network: str                       # none | nat | isolated | tor | vpn
+    network: str                       # none|nat|restricted|internal|tor|vpn|pentesting
     needs: tuple[str, ...] = ()        # runtime requirements, checked at launch
-    extra_qemu_args: tuple[str, ...] = ()
+    sandbox: bool = False              # request `-sandbox on` where QEMU supports it
 
     def describe_limits(self) -> list[str]:
+        """Caveats, so a tier never promises more than it delivers."""
         if self.key == "tor":
             return [
                 "Verifies Tor is reachable; does not transparently redirect traffic",
                 "Guest apps must be pointed at the host Tor SOCKS manually",
                 "TCP only - UDP/DNS over Tor is not handled",
             ]
+        if self.key == "stealth":
+            return [
+                "Verifies Tor and VPN are both up; does not transparently chain them",
+                "The actual VPN+Tor chaining must be configured on the host",
+            ]
         if self.key == "vpn":
             return [
                 "Verifies the tunnel interface is up; egress follows the host VPN",
-                "Kill switch (block traffic on tunnel drop) is not implemented",
+                "Kill switch is Linux-only and needs root",
             ]
-        if self.key == "host-only":
-            return ["Guest still reaches the internet via QEMU user NAT"]
+        if self.key == "pentesting":
+            return [
+                "Two NICs: one internal (VM<->VM), one NAT for internet",
+            ]
+        if self.key == "restricted":
+            return ["NIC is present but can reach neither host nor internet"]
         return []
+
+    def firewall_rules(self) -> list[str]:
+        """What this profile actually blocks/allows at the QEMU layer."""
+        net = self.network
+        if net == "none":
+            rules = ["No network device: guest is air-gapped",
+                     "No inbound or outbound traffic is possible"]
+        elif net == "restricted":
+            rules = ["NIC present but isolated (slirp restrict=yes)",
+                     "No host contact, no internet routing"]
+        elif net == "internal":
+            rules = ["VM<->VM only over multicast",
+                     "No host access, no internet"]
+        elif net == "tor":
+            rules = ["Outbound-only NAT: no inbound ports",
+                     "Requires a Tor SOCKS listener (verified at launch)"]
+        elif net == "vpn":
+            rules = ["NAT egress follows the host VPN",
+                     "Requires the VPN interface up (verified at launch)"]
+        elif net == "pentesting":
+            rules = ["Internal VM<->VM network (multicast)",
+                     "NAT internet for tooling",
+                     "Inbound only on forwarded ports"]
+        else:  # nat
+            rules = ["Outbound NAT to the internet",
+                     "Inbound only on forwarded ports (hostfwd)",
+                     "No direct access to host services"]
+        if self.sandbox:
+            rules.append("QEMU seccomp sandbox (-sandbox on) where the build supports it")
+        return rules
 
 
 PROFILES: dict[str, Profile] = {
+    "paranoid": Profile(
+        key="paranoid",
+        summary="Maximum isolation: air-gapped and seccomp-sandboxed.",
+        network="none",
+        sandbox=True,
+    ),
     "isolated": Profile(
         key="isolated",
-        summary="No network device. Guest cannot reach anything.",
+        summary="Air-gapped: no network device at all.",
         network="none",
+    ),
+    "stealth": Profile(
+        key="stealth",
+        summary="Requires Tor and a VPN, boots with no inbound ports.",
+        network="tor",
+        needs=("tor-socks", "vpn-interface"),
+        sandbox=True,
+    ),
+    "tor": Profile(
+        key="tor",
+        summary="Requires a Tor SOCKS listener, boots with no inbound ports.",
+        network="tor",
+        needs=("tor-socks",),
+    ),
+    "vpn": Profile(
+        key="vpn",
+        summary="Requires the VPN interface up before booting.",
+        network="vpn",
+        needs=("vpn-interface",),
+    ),
+    "pentesting": Profile(
+        key="pentesting",
+        summary="Internal VM network plus NAT internet for tools.",
+        network="pentesting",
     ),
     "nat": Profile(
         key="nat",
         summary="QEMU user networking with port forwards (default).",
         network="nat",
     ),
-    "host-only": Profile(
-        key="host-only",
-        summary="Internet out, but no access to the host or the LAN.",
-        network="isolated",
-    ),
-    "tor": Profile(
-        key="tor",
-        summary="Verifies Tor is up, then boots with no inbound ports.",
-        network="tor",
-        needs=("tor-socks",),
-    ),
-    "vpn": Profile(
-        key="vpn",
-        summary="Verifies the VPN interface is up before booting.",
-        network="vpn",
-        needs=("vpn-interface",),
+    "restricted": Profile(
+        key="restricted",
+        summary="NIC present, but no host contact and no internet.",
+        network="restricted",
     ),
 }
 
 DEFAULT_PROFILE = "isolated"
+
+# Isolation modes, exposed for the CLI/GUI and docs.
+ISOLATION_MODES: dict[str, str] = {
+    "full": "No network device - completely air-gapped",
+    "nat": "Outbound NAT with port forwards",
+    "restricted": "NIC isolated from host and internet",
+    "internal": "VMs can talk to each other only",
+    "tor": "Verify Tor is up, then outbound-only",
+    "vpn": "Verify the VPN is up, then NAT egress",
+}
 
 
 def get(key: str) -> Profile:
@@ -148,40 +220,59 @@ def check_launch(profile: Profile, *, socks_port: int = 9050,
             hint = "" if tor_installed() else " (tor is not installed: brew install tor | apt install tor)"
             check.ok = False
             check.reasons.append(
-                f"Tor profile needs a SOCKS listener on 127.0.0.1:{socks_port}{hint}")
+                f"Tor SOCKS listener not reachable on 127.0.0.1:{socks_port}{hint}")
     if "vpn-interface" in profile.needs:
         if not vpn_interface_up(vpn_interface):
             check.ok = False
             check.reasons.append(
-                f"VPN profile needs an up interface (configured: {vpn_interface or 'none'})")
-    if profile.key == "vpn":
+                f"VPN interface not up (configured: {vpn_interface or 'none'})")
+    if profile.key in ("vpn", "stealth"):
         check.warnings.append(
-            "Kill switch is not implemented; traffic is not blocked if the tunnel drops")
+            "Kill switch is Linux-only and needs root; traffic is not blocked on tunnel drop")
     return check
+
+
+# ---------- QEMU networking ----------
+
+def _user_netdev(net_id: str, forwards: list[str] | None = None,
+                 restrict: bool = False) -> list[str]:
+    opts = [f"user,id={net_id}"]
+    if restrict:
+        opts.append("restrict=yes")
+    elif forwards:
+        fwd = ",".join(f"hostfwd=tcp::{f.replace(':', '-:', 1)}" for f in forwards)
+        opts.append(fwd)
+    netdev = ",".join(opts)
+    return ["-netdev", netdev, "-device", f"virtio-net-pci,netdev={net_id}"]
+
+
+def _internal_netdev(net_id: str) -> list[str]:
+    return ["-netdev", f"socket,id={net_id},mcast={INTERNAL_MCAST}",
+            "-device", f"virtio-net-pci,netdev={net_id}"]
 
 
 def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
                       socks_port: int = 9050) -> list[str]:
     """Translate a profile into QEMU networking arguments.
 
-    `socks_port` is accepted for API stability but the guard profile does not
-    use it: QEMU user networking has no `socks=` option, so pretending to
+    `socks_port` is accepted for API stability; the guard profiles do not use
+    it because QEMU's user networking has no `socks=` option - pretending to
     proxy the guest through Tor at the hypervisor layer would be a lie.
     """
     del socks_port
-    if profile.network == "none":
+    net = profile.network
+    if net == "none":
         return []
-    if profile.network == "isolated":
-        return ["-netdev", "user,id=net0,restrict=yes",
-                "-device", "virtio-net-pci,netdev=net0"]
-    if profile.network == "tor":
-        # Outbound-only user networking: no hostfwd, so nothing from the host
-        # can reach the guest. The guest still has normal outbound internet;
-        # the Tor guard only *verifies* Tor is up and documents that routing
-        # must be configured inside the guest.
-        return ["-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0"]
-    if profile.network in ("nat", "vpn"):
-        fwd = ",".join(f"hostfwd=tcp::{f.replace(':', '-:', 1)}" for f in (forwards or []))
-        netdev = "user,id=net0" + (f",{fwd}" if fwd else "")
-        return ["-netdev", netdev, "-device", "virtio-net-pci,netdev=net0"]
-    raise ValueError(f"Unhandled network type {profile.network}")
+    if net == "nat":
+        return _user_netdev("net0", forwards)
+    if net == "restricted":
+        return _user_netdev("net0", restrict=True)
+    if net == "internal":
+        return _internal_netdev("net0")
+    if net == "tor":
+        return _user_netdev("net0")  # outbound-only: no hostfwd
+    if net == "vpn":
+        return _user_netdev("net0", forwards)
+    if net == "pentesting":
+        return _internal_netdev("net0") + _user_netdev("net1", forwards)
+    raise ValueError(f"Unhandled network type {net}")

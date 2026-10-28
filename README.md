@@ -40,28 +40,81 @@ launch fails with a reason.
   interface, both reusing the exact same core.
 - **QEMU seccomp sandbox** (`-sandbox on`) applied automatically where the
   build supports it (Linux), never claimed elsewhere.
+- **Eight security tiers** (`paranoid` → `restricted`) with network isolation,
+  Tor/VPN verification, and per-tier firewall rules - all enforced at launch.
+- **Tor integration**: SOCKS check, identity rotation, and torrc generation
+  (bridges, exit nodes, DNS leak protection).
+- **VPN support**: WireGuard/OpenVPN detection, config templates, and a kill
+  switch (WireGuard `AllowedIPs`; OpenVPN via Linux `iptables`).
+- **Security Center** in the GUI and CLI (`sargatanas security`).
 - **One-time migration** from the old `~/n01d-machine` config.
 
 ## Security profiles
 
-| Profile | What it does | Enforced? |
+Eight tiers, from most closed to most open. Each one only claims what it
+actually enforces, and a profile that cannot be verified **refuses to start**
+instead of degrading silently.
+
+| Tier | Network | Verifies at launch |
 |---|---|---|
-| `isolated` | No network device in the guest | Yes, always |
-| `nat` | QEMU user networking, with `2222:22` forwarded by default | Yes, always |
-| `host-only` | User networking with `restrict=yes`: internet out, no host/LAN access | Yes, always |
-| `tor` | Verifies a Tor SOCKS listener is up, then boots with no inbound ports | Only if Tor is reachable, else **refuses to start** |
-| `vpn` | Verifies the VPN interface is up before booting | Only if the interface is up, else **refuses to start** |
+| `paranoid` | Air-gapped + seccomp sandbox | - |
+| `isolated` | Air-gapped (no NIC) | - |
+| `stealth` | Outbound-only | Tor SOCKS **and** VPN interface |
+| `tor` | Outbound-only | Tor SOCKS |
+| `vpn` | NAT egress | VPN interface |
+| `pentesting` | Internal VM↔VM + NAT | - |
+| `nat` | NAT + port forwards | - |
+| `restricted` | NIC, no host, no internet | - |
 
-**What the profiles do not do.** These are stated here rather than discovered
-later:
+## Network isolation modes
 
-- `tor` does **not** transparently route guest traffic through Tor - that
-  requires a dedicated gateway (Whonix/Tails). It only verifies Tor is
-  reachable and boots with outbound-only networking; you must point the
-  guest's own applications at the host Tor proxy.
-- `vpn` does not install a **kill switch**. If the tunnel drops, guest traffic
-  is not blocked. This is not implemented yet.
-- `host-only` blocks the *host and LAN*, not the internet.
+| Mode | What it does |
+|---|---|
+| `full` | No network device - completely air-gapped |
+| `nat` | Outbound NAT with port forwards |
+| `restricted` | NIC present, isolated from host and internet |
+| `internal` | VMs talk to each other only (multicast) |
+| `tor` | Verify Tor is up, then outbound-only |
+| `vpn` | Verify the VPN is up, then NAT egress |
+
+## Tor integration
+
+- **SOCKS check** - verifies a listener is actually reachable before booting
+- **One-click identity rotation** - `sargatanas tor identity` (real control-port
+  protocol, not a fire-and-forget string)
+- **torrc generation** - `sargatanas tor config` emits bridges, exit-node
+  selection, strict nodes, and DNS leak protection
+  (`DNSPort` + `AutomapHostsOnResolve` + `VirtualAddrNetwork`)
+
+## VPN features
+
+- **WireGuard & OpenVPN** detection, tunnel-interface checks, and config
+  templates (`sargatanas vpn wireguard-config` / `openvpn-config`)
+- **Kill switch** - WireGuard's `AllowedIPs = 0.0.0.0/0` (no route on drop),
+  and Linux `iptables` rules for OpenVPN (`sargatanas vpn kill-switch on|off`)
+
+## Firewall rules
+
+`sargatanas firewall <profile>` prints exactly what a tier blocks and allows at
+the QEMU networking layer - no fake `iptables` strings that nobody runs. The
+same rules appear in the GUI's **Security** tab.
+
+## Security Center
+
+`sargatanas security` (and the GUI's Security tab) shows live Tor/VPN/seccomp
+status, the isolation modes, and the tier ordering.
+
+## Honest limits
+
+Stated here rather than discovered later:
+
+- `tor`/`stealth` verify Tor/VPN is up but do **not** transparently route guest
+  traffic - that needs a dedicated gateway (Whonix/Tails). The guest must be
+  pointed at the host Tor proxy.
+- The OpenVPN **kill switch** is Linux-only and needs root; on macOS/Windows it
+  is reported as unavailable.
+- True **host-only** (guest↔host, no internet) needs a root `tap`/bridge; slirp
+  cannot do it, so `restricted` gives you an isolated NIC instead.
 
 ## Requirements
 
@@ -114,7 +167,13 @@ sargatanas live lab                   # boot the ISO, discard changes
 sargatanas list
 sargatanas stop lab
 sargatanas delete lab
-sargatanas profiles                   # what each profile really enforces
+sargatanas profiles                   # the tiers, most closed -> most open
+sargatanas security                   # Security Center: protections + modes
+sargatanas firewall paranoid          # what a tier blocks/allows
+sargatanas tor config                 # generate a torrc (bridges, exit nodes, DNS)
+sargatanas tor identity               # ask Tor for a new circuit
+sargatanas vpn status                 # WireGuard/OpenVPN + tunnel status
+sargatanas vpn wireguard-config       # WireGuard config template
 sargatanas gui                        # Tkinter GUI (works everywhere)
 sargatanas gui --gtk                  # GTK interface (Linux/macOS)
 ```
