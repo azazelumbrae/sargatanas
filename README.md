@@ -4,84 +4,84 @@
 
 # Sargatanas
 
-**Gestor de máquinas virtuales con aislamiento de red, sobre QEMU**
+**Virtual machine manager with network isolation, built on QEMU**
 
-Crea una VM, asígnale un nivel de seguridad, arráncala y sabe en todo momento
-qué protecciones están activas de verdad.
+Create a VM, pick a security tier, boot it — and always know which protections
+are actually active.
 
 <br>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/mildredhoe/sargantanas/ci.yml?branch=main&style=flat-square&label=CI&logo=github)](https://github.com/mildredhoe/sargantanas/actions)
-[![Versión](https://img.shields.io/badge/versión-0.1.0-c9a227?style=flat-square)](https://github.com/mildredhoe/sargantanas/releases)
+[![Version](https://img.shields.io/badge/version-0.1.0-c9a227?style=flat-square)](https://github.com/mildredhoe/sargantanas/releases)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![QEMU](https://img.shields.io/badge/qemu-6.0%2B-ff6600?style=flat-square)](https://www.qemu.org/)
-[![Plataformas](https://img.shields.io/badge/plataformas-linux%20%7C%20macos%20%7C%20windows-2ea043?style=flat-square)](#-plataformas)
-[![Licencia](https://img.shields.io/badge/licencia-MIT-3da639?style=flat-square)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-2ea043?style=flat-square)](#-platforms)
+[![License](https://img.shields.io/badge/license-MIT-3da639?style=flat-square)](LICENSE)
 
 <br>
 
-[Funcionalidades](#-funcionalidades) •
-[Niveles](#-niveles-de-seguridad) •
-[Modos de red](#-modos-de-aislamiento-de-red) •
-[Tor y VPN](#-tor-y-vpn) •
-[Instalación](#-instalación) •
-[Uso](#-uso) •
-[GUI](#-interfaz-gráfica)
+[Features](#-features) •
+[Security tiers](#️-security-tiers) •
+[Network modes](#-network-isolation-modes) •
+[Tor & VPN](#-tor--vpn) •
+[Install](#-install) •
+[Usage](#-usage) •
+[GUI](#️-graphical-interface)
 
 </div>
 
 ---
 
-## 📌 Qué es
+## 📌 What it is
 
-**Sargatanas** es una capa sencilla sobre **QEMU** para gestionar máquinas
-virtuales desde una sola terminal o una interfaz gráfica.
+**Sargatanas** is a thin layer over **QEMU** for managing virtual machines from
+a single terminal or a graphical interface.
 
-Su idea central: en lugar de arrancar una VM "y ya", eliges un **nivel de
-seguridad** y Sargatanas configura la red en consecuencia. Los niveles que
-dependen de servicios externos (Tor, VPN) **se comprueban antes de arrancar**:
-si el servicio no está disponible, la VM no arranca y te dice por qué, en vez
-de arrancar sin la protección que creías tener.
+The core idea: instead of "just booting a VM", you pick a **security tier** and
+Sargatanas configures networking accordingly. Tiers that depend on external
+services (Tor, VPN) are **checked before launch**: if the service is not
+available, the VM does not start and tells you why — rather than starting
+without the protection you thought you had.
 
-Todo el estado vive en un único directorio (`~/Sargatanas`), con un JSON
-versionado y legible.
+All state lives in one directory (`~/Sargatanas`), in a versioned, readable
+JSON file.
 
 ---
 
-## ✨ Funcionalidades
+## ✨ Features
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### Gestión de máquinas
-- Crear, arrancar, parar y borrar VMs
-- Disco `qcow2` del tamaño que quieras
-- RAM y CPUs por VM
-- Estado en vivo (¿está corriendo de verdad?)
+### Machine management
+- Create, start, stop and delete VMs
+- `qcow2` disk of any size
+- Per-VM RAM and CPU count
+- Live status (is it really running?)
 
-### Arranque flexible
-- **Disco** — arranque normal del sistema instalado
-- **Instalador** — arranca el ISO para instalar
-- **Live** — arranca el ISO **sin tocar el disco** (los cambios se descartan)
-- **Quick boot** — ISO sin disco, totalmente desechable
+### Flexible booting
+- **Disk** — normal boot of the installed system
+- **Install** — boot the ISO installer
+- **Live** — boot the ISO **without touching the disk** (changes discarded)
+- **Quick boot** — diskless ISO, fully disposable
 
 </td>
 <td width="50%" valign="top">
 
-### Seguridad
-- **8 niveles** de aislamiento, de más cerrado a más abierto
-- **6 modos de red** configurables
-- Comprobación de **Tor** y **VPN** antes de arrancar
-- Reglas de **cortafuegos** por nivel, consultables
-- **Sandbox de QEMU** (seccomp) donde el binario lo soporte
+### Security
+- **8 tiers** of isolation, most closed to most open
+- **6 network modes** to choose from
+- **Tor** and **VPN** checks before launch
+- Per-tier **firewall rules**, inspectable at any time
+- **QEMU sandbox** (seccomp) where the binary supports it
 
-### Utilidades
-- **Snapshots** del disco (`qemu-img`)
-- **Detección de ISOs** en tus carpetas habituales
-- **Rotación de identidad de Tor**
-- **Plantillas** de WireGuard y OpenVPN
-- **Kill switch** de VPN
+### Utilities
+- Disk **snapshots** (`qemu-img`)
+- **ISO discovery** in your usual folders
+- **Tor identity rotation**
+- **WireGuard** and **OpenVPN** templates
+- VPN **kill switch**
 
 </td>
 </tr>
@@ -89,60 +89,61 @@ versionado y legible.
 
 ---
 
-## 🛡️ Niveles de seguridad
+## 🛡️ Security tiers
 
-De **más cerrado** a **más abierto**. Cada nivel declara qué comprueba y qué
-bloquea; los que dependen de un servicio externo se **niegan a arrancar** si no
-pueden cumplirse.
+From **most closed** to **most open**. Every tier declares what it checks and
+what it blocks; ones that depend on an external service **refuse to start** if
+they cannot be honoured.
 
-| # | Nivel | Red del guest | Comprueba antes de arrancar | Sandbox |
-|:-:|-------|---------------|-----------------------------|:-------:|
-| 1 | 🔴 **`paranoid`** | Sin dispositivo de red (air-gap) | — | ✅ |
-| 2 | 🟠 **`isolated`** | Sin dispositivo de red (air-gap) | — | — |
-| 3 | 🟣 **`stealth`** | Solo salida, sin puertos de entrada | **Tor** + **VPN** | ✅ |
-| 4 | 🟣 **`tor`** | Solo salida, sin puertos de entrada | **Tor** | — |
-| 5 | 🔵 **`vpn`** | NAT siguiendo el túnel | **VPN** | — |
-| 6 | 🟢 **`pentesting`** | Red interna VM↔VM + NAT | — | — |
-| 7 | ⚪ **`nat`** | NAT con reenvío de puertos | — | — |
-| 8 | ⚫ **`restricted`** | NIC aislada (sin host, sin internet) | — | — |
+| # | Tier | Guest network | Checks before launch | Sandbox |
+|:-:|------|---------------|----------------------|:-------:|
+| 1 | 🔴 **`paranoid`** | No network device (air-gap) | — | ✅ |
+| 2 | 🟠 **`isolated`** | No network device (air-gap) | — | — |
+| 3 | 🟣 **`stealth`** | Outbound only, no inbound ports | **Tor** + **VPN** | ✅ |
+| 4 | 🟣 **`tor`** | Outbound only, no inbound ports | **Tor** | — |
+| 5 | 🔵 **`vpn`** | NAT through the tunnel | **VPN** | — |
+| 6 | 🟢 **`pentesting`** | Internal VM↔VM network + NAT | — | — |
+| 7 | ⚪ **`nat`** | NAT with port forwards | — | — |
+| 8 | ⚫ **`restricted`** | NIC present but isolated | — | — |
 
-> **Ejemplo:** `sargatanas create lab --profile stealth` solo arranca si hay un
-> SOCKS de Tor **y** una interfaz VPN activas. Si falta cualquiera, la VM no se
-> lanza.
-
----
-
-## 🌐 Modos de aislamiento de red
-
-| Modo | Qué hace | Requiere |
-|------|----------|:--------:|
-| `full` | Sin dispositivo de red — **air-gap** total | — |
-| `nat` | Salida a internet con **reenvío de puertos** | — |
-| `restricted` | NIC presente pero **aislada** del host y de internet | — |
-| `internal` | Solo **comunicación entre VMs** (multicast) | — |
-| `tor` | Comprueba Tor → modo **solo salida** | Tor |
-| `vpn` | Comprueba VPN → **egress por el túnel** | VPN |
-
-> **Host-only real:** un modo donde la VM vea sólo al *host* y no a internet
-> requiere un `tap`/bridge con permisos de root; QEMU en modo usuario (slirp) no
-> puede hacerlo. Por eso existe `restricted`, que da una NIC aislada.
+> **Example:** `sargatanas create lab --profile stealth` only starts if a Tor
+> SOCKS listener **and** an active VPN interface are present. If either is
+> missing, the VM is not launched.
 
 ---
 
-## 🧅 Tor y VPN
+## 🌐 Network isolation modes
+
+| Mode | What it does | Requires |
+|------|--------------|:--------:|
+| `full` | No network device — **complete air-gap** | — |
+| `nat` | Internet out with **port forwards** | — |
+| `restricted` | NIC present but **isolated** from host and internet | — |
+| `internal` | **VM↔VM traffic only** (multicast) | — |
+| `tor` | Checks Tor → **outbound only** | Tor |
+| `vpn` | Checks VPN → **egress through the tunnel** | VPN |
+
+> **True host-only:** a mode where the VM sees only the *host* and not the
+> internet requires a `tap`/bridge with root privileges; QEMU user-mode
+> networking (slirp) cannot do it. That is why `restricted` exists — it gives
+> you an isolated NIC instead.
+
+---
+
+## 🧅 Tor & VPN
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
 ### Tor
-- **Comprobación de SOCKS** antes de arrancar
-- **Rotación de identidad** real (protocolo de control)
-- **Generación de `torrc`** con:
-  - Puentes (bridges)
-  - Selección de nodos de salida
-  - Nodos estrictos
-  - Protección anti-fuga de DNS
+- **SOCKS check** before launch
+- Real **identity rotation** (control protocol)
+- **`torrc` generation** with:
+  - Bridges
+  - Exit node selection
+  - Strict nodes
+  - DNS leak protection
 
 ```bash
 sargatanas tor config --output torrc
@@ -154,11 +155,11 @@ sargatanas tor check
 <td width="50%" valign="top">
 
 ### VPN
-- Detección de **WireGuard** y **OpenVPN**
-- **Plantillas** de configuración listas
+- **WireGuard** and **OpenVPN** detection
+- Ready-made **config templates**
 - **Kill switch**:
   - WireGuard: `AllowedIPs = 0.0.0.0/0`
-  - OpenVPN: reglas `iptables` (Linux)
+  - OpenVPN: `iptables` rules (Linux)
 
 ```bash
 sargatanas vpn status
@@ -172,48 +173,48 @@ sargatanas vpn kill-switch on --interface wg0
 
 ---
 
-## 🔍 Cortafuegos por nivel
+## 🔍 Per-tier firewall
 
-Cada nivel tiene sus reglas explícitas, consultables en cualquier momento:
+Every tier has explicit rules you can inspect at any time:
 
 ```bash
 sargatanas firewall paranoid
 ```
 
 ```
-paranoid - Máximo aislamiento: air-gap y sandbox seccomp.
+paranoid - Maximum isolation: air-gapped and seccomp-sandboxed.
 
-  · Sin dispositivo de red: el guest está aislado
-  · No es posible tráfico de entrada ni de salida
-  · Sandbox seccomp de QEMU (-sandbox on) donde el binario lo soporte
+  · No network device: guest is air-gapped
+  · No inbound or outbound traffic is possible
+  · QEMU seccomp sandbox (-sandbox on) where the build supports it
 ```
 
 ---
 
-## 💻 Plataformas
+## 💻 Platforms
 
-| Sistema | Aceleración | Detección automática |
-|---------|-------------|----------------------|
+| System | Acceleration | Auto-detection |
+|--------|--------------|----------------|
 | 🐧 **Linux** | KVM | `/dev/kvm` |
-| 🍎 **macOS** (Intel y Apple Silicon) | HVF | Binario `aarch64` + máquina `virt` + `ramfb` |
-| 🪟 **Windows** | WHPX | `C:\Program Files\qemu` aunque no esté en `PATH` |
+| 🍎 **macOS** (Intel and Apple Silicon) | HVF | `aarch64` binary + `virt` machine + `ramfb` |
+| 🪟 **Windows** | WHPX | `C:\Program Files\qemu` even when not on `PATH` |
 
-Los tres sistemas usan la **misma interfaz de línea de comandos** y la **misma
-GUI** (Tkinter, incluida con Python).
+All three systems share the **same command line** and the **same GUI**
+(Tkinter, bundled with Python).
 
 ---
 
-## 📦 Instalación
+## 📦 Install
 
-| Paso | Comando |
+| Step | Command |
 |------|---------|
-| 1. Requisitos | Ver tabla de abajo |
-| 2. Clonar | `git clone https://github.com/mildredhoe/sargantanas && cd sargantanas` |
-| 3. Instalar | `pip install .` |
-| 4. Comprobar | `sargatanas status` |
+| 1. Requirements | See the table below |
+| 2. Clone | `git clone https://github.com/mildredhoe/sargantanas && cd sargantanas` |
+| 3. Install | `pip install .` |
+| 4. Verify | `sargatanas status` |
 
-**Requisitos:** Python 3.9+, QEMU (`qemu-system-*`), `qemu-img`.
-`psutil` se instala solo como dependencia.
+**Requirements:** Python 3.9+, QEMU (`qemu-system-*`), `qemu-img`.
+`psutil` is installed automatically as a dependency.
 
 ```bash
 # macOS
@@ -229,103 +230,102 @@ sudo dnf install qemu-system-x86 qemu-img
 choco install qemu
 ```
 
-Opcional: **Tor** (`brew install tor` / `apt install tor`) y **WireGuard**
+Optional: **Tor** (`brew install tor` / `apt install tor`) and **WireGuard**
 (`brew install wireguard-tools` / `apt install wireguard`).
 
 ---
 
-## 🚀 Uso
+## 🚀 Usage
 
 ```bash
-# Diagnóstico
-sargatanas status                # QEMU, aceleración, Tor, espacio libre
-sargatanas security              # Centro de seguridad: protecciones en vivo
-sargatanas isos                  # ISOs encontrados
+# Diagnostics
+sargatanas status                # QEMU, acceleration, Tor, free space
+sargatanas security              # Security center: live protections
+sargatanas isos                  # discovered ISOs
 
-# Crear y arrancar
+# Create and boot
 sargatanas create lab --iso ~/Downloads/debian.iso --ram 2048 --disk 20
-sargatanas install lab           # arrancar el instalador
-sargatanas run lab               # arrancar desde disco
-sargatanas live lab              # arrancar el ISO sin tocar el disco
+sargatanas install lab           # boot the installer
+sargatanas run lab               # boot from disk
+sargatanas live lab              # boot the ISO without touching the disk
 
-# Gestión
+# Management
 sargatanas list
 sargatanas stop lab
 sargatanas delete lab
 
-# Seguridad
-sargatanas profiles              # los niveles, de cerrado a abierto
-sargatanas firewall <nivel>      # reglas de un nivel
+# Security
+sargatanas profiles              # the tiers, closed to open
+sargatanas firewall <tier>       # rules for one tier
 ```
 
-**Sobrescribir un parámetro puntual:**
+**Override a single parameter:**
 
 ```bash
-sargatanas run lab --profile tor   # otro nivel sólo para este arranque
-sargatanas run lab --headless      # consola serie, sin ventana
+sargatanas run lab --profile tor   # a different tier for this boot only
+sargatanas run lab --headless      # serial console, no window
 ```
 
 ---
 
-## 🖥️ Interfaz gráfica
+## 🖥️ Graphical interface
 
 ```bash
 sargatanas gui          # Tkinter (Linux · macOS · Windows)
 sargatanas gui --gtk    # GTK (Linux · macOS)
 ```
 
-Pestañas: **Machines · Create · ISOs · Profiles · Security · Network**
+Tabs: **Machines · Create · ISOs · Profiles · Security · Network**
 
 ---
 
-## 📁 Dónde se guarda todo
+## 📁 Where everything lives
 
 ```
 ~/Sargatanas/
-├── config.json      # versionado; 0600 en Unix, ACLs NTFS en Windows
-├── vms/<nombre>/    # disco qcow2 + pid
-├── isos/            # aquí se buscan los ISO primero
+├── config.json      # versioned; 0600 on Unix, NTFS ACLs on Windows
+├── vms/<name>/      # qcow2 disk + pid
+├── isos/            # ISOs are searched here first
 └── logs/
 ```
 
-| Variable | Para qué |
-|----------|----------|
-| `SARGATANAS_HOME` | Cambiar el directorio de datos |
-| `SARGATANAS_ISOS` | Carpetas ISO adicionales (`:` separado) |
-| `NO_COLOR` | Desactivar color en la terminal |
+| Variable | Purpose |
+|----------|---------|
+| `SARGATANAS_HOME` | Change the data directory |
+| `SARGATANAS_ISOS` | Extra ISO folders (`:`-separated) |
+| `NO_COLOR` | Disable terminal colour |
 
 ---
 
-## 🧑‍💻 Desarrollo
+## 🧑‍💻 Development
 
 ```bash
-python dev.py test     # suite de tests (no necesita QEMU)
-python dev.py dist     # paquete sdist + wheel
-python dev.py icons    # regenerar iconos desde el SVG
+python dev.py test     # test suite (no QEMU needed)
+python dev.py dist     # sdist + wheel
+python dev.py icons    # regenerate icons from the SVG
 ```
 
-Los tests cubren la construcción de argumentos de QEMU, los niveles, la
-configuración, el protocolo de Tor y la gestión de procesos. Corren en Linux,
-macOS y Windows.
+The tests cover QEMU argument construction, the tiers, configuration, the Tor
+control protocol and process management. They run on Linux, macOS and Windows.
 
 ---
 
 <div align="center">
 
-## ⚖️ Límites conocidos
+## ⚖️ Known limits
 
-Lo que **no** hace, dicho por delante:
+What it explicitly does **not** do:
 
-| Lo que no hace | Por qué |
-|----------------|---------|
-| Routing **transparente** por Tor | Necesita una gateway dedicada (Whonix/Tails) |
-| **Host-only** real (VM↔host) | Necesita `tap`/bridge con root |
-| **Kill switch** en macOS/Windows | Sólo implementado en Linux (iptables) |
+| Limitation | Why |
+|------------|-----|
+| Transparent **Tor routing** | Requires a dedicated gateway (Whonix/Tails) |
+| True **host-only** (VM↔host) | Requires `tap`/bridge with root |
+| **Kill switch** on macOS/Windows | Linux only (iptables) |
 
 <br>
 
-Hecho con ❤️ por [Álvaro Souza](https://github.com/mildredhoe)
+Made with ❤️ by [Álvaro Souza](https://github.com/mildredhoe)
 
-<sub>MIT · Basado en <a href="https://github.com/bad-antics/n01d-machine">n01d-machine</a></sub>
+<sub>MIT · Based on <a href="https://github.com/bad-antics/n01d-machine">n01d-machine</a></sub>
 
 </div>
