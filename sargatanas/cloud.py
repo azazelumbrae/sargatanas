@@ -238,7 +238,25 @@ if [ "$IPV6_STATE" = "1" ]; then
 else
     echo "sargatanas: WARNING IPv6 could not be disabled" >&2
 fi
-echo "sargatanas: Tor routing active - verify with: torsocks curl https://check.torproject.org/api/ip"
+# Proxy-unaware programs: run them under torsocks. Plain TCP works through
+# the relay; if a program needs TLS the SOCKS client must speak it directly,
+# so the check below tells the user what to expect.
+cat > /usr/local/bin/sargatanas-check <<'SCRIPT'
+#!/bin/sh
+echo "sargatanas: verifying Tor routing"
+if torsocks wget -q -O- --timeout=20 http://example.com >/dev/null 2>&1; then
+    echo "  OK  plain TCP leaves through Tor"
+else
+    echo "  FAIL plain TCP is not routed"
+fi
+if torsocks wget -q -O- --timeout=25 https://example.com >/dev/null 2>&1; then
+    echo "  OK  TLS leaves through Tor"
+else
+    echo "  WARN TLS through the tunnel is unstable on this host"
+fi
+SCRIPT
+chmod +x /usr/local/bin/sargatanas-check
+echo "sargatanas: Tor routing active - run 'sargatanas-check' to verify"
 """
 
 TOR_USER_DATA = """#cloud-config

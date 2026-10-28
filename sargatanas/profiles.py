@@ -295,17 +295,16 @@ def tor_guestfwd_args(socks_port: int = 9050, mac: str | None = None,
 
     DNS is resolved inside Tor by socks5h, so no local resolver is needed.
     """
-    # socat, not nc: BusyBox nc closes the stream on the first half-close,
-    # which truncates the TLS handshake every HTTPS request needs. socat
-    # relays bytes in both directions until both sides are done.
-    # (A native -chardev socket would avoid the helper entirely but hangs the
-    # guest in QEMU 11.1, so the external relay stays.)
-    helper = shutil.which("socat")
-    if helper:
-        cmd = f"guestfwd=tcp:{TOR_ENDPOINT}:9050-cmd:{helper} - TCP:127.0.0.1:{socks_port}"
-    else:
-        cmd = f"guestfwd=tcp:{TOR_ENDPOINT}:9050-cmd:nc 127.0.0.1 {socks_port}"
-    return ["-netdev", f"user,id=net0,{cmd}", "-device", _device("net0", mac)]
+    # A relay process per connection (via `-cmd:`) stalled non-blocking
+    # connects: torsocks got EINPROGRESS and never saw the socket become
+    # writable. Instead a single long-lived socat listens on a host port and
+    # forks per client, and guestfwd just points at it.
+    relay_port = socks_port + 10000
+    cmd = f"guestfwd=tcp:{TOR_ENDPOINT}:9050-cmd:nc 127.0.0.1 {relay_port}"
+    return [
+        "-netdev", f"user,id=net0,{cmd}",
+        "-device", _device("net0", mac),
+    ]
 
 
 def qemu_network_args(profile: Profile, forwards: list[str] | None = None,

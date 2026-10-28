@@ -571,6 +571,7 @@ class TestCloud(TempHome):
         yaml = cloud.user_data_tor()
         self.assertIn("WARNING IPv6 could not be disabled", yaml)
         self.assertIn("Tor routing active", yaml)
+        self.assertIn("sargatanas-check", yaml)
 
     def test_no_heredoc_marker_in_script(self):
         # A heredoc EOF cannot close once the YAML block indents it, which

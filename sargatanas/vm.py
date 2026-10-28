@@ -214,6 +214,11 @@ def start(name: str, *, live: bool = False, install: bool = False,
     if not check.ok:
         raise VmError("Refusing to start: " + "; ".join(check.reasons))
 
+    # Tor tiers need the host-side relay running before QEMU starts, because
+    # guestfwd only points the guest at it.
+    if prof.network == "tor":
+        qemu.start_tor_relay(cfg.tor.socks_port)
+
     iso = Path(vm.iso) if vm.iso else None
     boot = "d" if (live or install) else "c"
     extra: list[str] = []

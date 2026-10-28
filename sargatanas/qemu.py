@@ -293,6 +293,30 @@ def default_display() -> str:
 
 # ---------- process management ----------
 
+def start_tor_relay(socks_port: int = 9050, relay_port: int | None = None):
+    """Start a socat relay that forwards a host port to Tor's SOCKS port.
+
+    guestfwd executes a helper per connection, and a short-lived helper leaves
+    non-blocking clients stuck in EINPROGRESS. A long-lived socat with `fork`
+    behaves like a normal server, so torsocks' connect() completes.
+
+    Returns the Popen handle, or None when socat is not installed (callers
+    then fall back to the plain helper).
+    """
+    socat = shutil.which("socat")
+    if not socat:
+        return None
+    relay_port = relay_port or socks_port + 10000
+    try:
+        return subprocess.Popen(
+            [socat, f"TCP-LISTEN:{relay_port},reuseaddr,fork,keepalive",
+             f"TCP:127.0.0.1:{socks_port},keepalive,nodelay"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return None
+
+
 def spawn(argv: list[str], attach: bool = False) -> subprocess.Popen:
     """Start QEMU.
 
