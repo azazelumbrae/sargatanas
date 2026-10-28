@@ -10,8 +10,8 @@ Privacy is a bless granted by design, do not let others decide your destiny.
 
 <br>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/mildredhoe/sargantanas/ci.yml?branch=main&style=flat-square&label=CI&logo=github)](https://github.com/mildredhoe/sargantanas/actions)
-[![Version](https://img.shields.io/badge/version-0.1.0-c9a227?style=flat-square)](https://github.com/mildredhoe/sargantanas/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/azazelumbrae/sargantanas/ci.yml?branch=main&style=flat-square&label=CI&logo=github)](https://github.com/azazelumbrae/sargantanas/actions)
+[![Version](https://img.shields.io/badge/version-0.1.0-c9a227?style=flat-square)](https://github.com/azazelumbrae/sargantanas/releases)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![QEMU](https://img.shields.io/badge/qemu-6.0%2B-ff6600?style=flat-square)](https://www.qemu.org/)
 [![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-2ea043?style=flat-square)](#-platforms)
@@ -233,7 +233,7 @@ Grab a standalone binary - no Python required.
 | 🐧 **Linux** x86_64 | `sargatanas-v0.1.0-linux-x86_64` | `chmod +x` and run |
 | 🪟 **Windows** x86_64 | `sargatanas-v0.1.0-windows-x86_64.exe` | Double-click |
 
-[**→ Latest release**](https://github.com/mildredhoe/sargantanas/releases/latest)
+[**→ Latest release**](https://github.com/azazelumbrae/sargantanas/releases/latest)
 
 **QEMU is not bundled.** It has to match your CPU, so install it once:
 
@@ -261,7 +261,7 @@ Signing needs paid developer accounts (Apple $99/yr, Windows certificate).
 | Step | Command |
 |------|---------|
 | 1. Requirements | Python 3.9+ and QEMU |
-| 2. Clone | `git clone https://github.com/mildredhoe/sargantanas && cd sargantanas` |
+| 2. Clone | `git clone https://github.com/azazelumbrae/sargantanas && cd sargantanas` |
 | 3. Install | `pip install .` |
 | 4. Verify | `sargatanas status` |
 
