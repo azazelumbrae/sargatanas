@@ -379,6 +379,76 @@ class TestProcess(unittest.TestCase):
         proc.kill.assert_called_once()
 
 
+class TestSettings(TempHome):
+    def test_tor_port_validated(self):
+        cfg = config.Config()
+        self.assertEqual(config.update_tor(cfg, socks_port="9150").tor.socks_port, 9150)
+        with self.assertRaises(config.SettingsError):
+            config.update_tor(cfg, socks_port="0")
+        with self.assertRaises(config.SettingsError):
+            config.update_tor(cfg, control_port="not a port")
+
+    def test_tor_bridges_cleaned(self):
+        cfg = config.Config()
+        config.update_tor(cfg, bridges=["  bridge one  ", "", "   "])
+        self.assertEqual(cfg.tor.bridges, ["bridge one"])
+
+    def test_vpn_provider_validated(self):
+        cfg = config.Config()
+        with self.assertRaises(config.SettingsError):
+            config.update_vpn(cfg, provider="nordvpn")
+        config.update_vpn(cfg, provider="wireguard", interface="wg0", kill_switch=True)
+        self.assertEqual((cfg.vpn.provider, cfg.vpn.interface, cfg.vpn.kill_switch),
+                         ("wireguard", "wg0", True))
+
+    def test_forwards_validated(self):
+        cfg = config.Config()
+        config.update_network(cfg, forwards=["2222:22", " 8080:80 ", ""])
+        self.assertEqual(cfg.network.forwards, ["2222:22", "8080:80"])
+        for bad in ("2222", "a:22", "2222:22:33", "99999:22"):
+            with self.assertRaises(config.SettingsError, msg=bad):
+                config.update_network(cfg, forwards=[bad])
+
+    def test_defaults_validated(self):
+        cfg = config.Config()
+        with self.assertRaises(KeyError):
+            config.update_defaults(cfg, default_profile="nope")
+        with self.assertRaises(config.SettingsError):
+            config.update_defaults(cfg, default_ram="a lot")
+        config.update_defaults(cfg, default_ram=2048, default_profile="paranoid")
+        self.assertEqual((cfg.default_ram, cfg.default_profile), (2048, "paranoid"))
+
+    def test_saved_changes_roundtrip(self):
+        cfg = config.load()
+        config.update_tor(cfg, socks_port="9150", bridges=["obfs4 x"])
+        config.save(cfg)
+        again = config.load()
+        self.assertEqual(again.tor.socks_port, 9150)
+        self.assertEqual(again.tor.bridges, ["obfs4 x"])
+
+
+class TestProfileSwitch(TempHome):
+    def test_set_profile_persists(self):
+        with mock.patch("sargatanas.qemu.create_disk"):
+            vm.create("p")
+            vm.set_profile("p", "paranoid")
+        self.assertEqual(config.load().vms["p"].profile, "paranoid")
+
+    def test_set_profile_rejects_unknown(self):
+        with mock.patch("sargatanas.qemu.create_disk"):
+            vm.create("q")
+        with self.assertRaises(KeyError):
+            vm.set_profile("q", "nope")
+
+    def test_launch_state_reports_blocker(self):
+        with mock.patch("sargatanas.qemu.create_disk"):
+            vm.create("r", profile="tor")
+        with mock.patch.object(profiles, "tor_socks_reachable", return_value=False):
+            check = vm.launch_state("r")
+        self.assertFalse(check.ok)
+        self.assertTrue(check.reasons)
+
+
 class TestTorConfig(unittest.TestCase):
     def test_torrc_has_dns_leak_protection(self):
         text = torcfg.generate_torrc(config.TorSettings())

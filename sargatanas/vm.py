@@ -256,3 +256,26 @@ def snapshots(name: str, cfg: config.Config | None = None) -> list[str]:
     if name not in cfg.vms:
         raise VmError(f"VM '{name}' not found")
     return qemu.snapshot_list(Path(cfg.vms[name].disk))
+
+
+# ---------- profile switching ----------
+
+def set_profile(name: str, profile: str, cfg: config.Config | None = None) -> None:
+    """Persist a new default tier for a VM."""
+    cfg = cfg or config.load()
+    if name not in cfg.vms:
+        raise VmError(f"VM '{name}' not found")
+    profiles.get(profile)
+    cfg.vms[name].profile = profile
+    config.save(cfg)
+
+
+def launch_state(name: str, profile: str | None = None,
+                 cfg: config.Config | None = None) -> profiles.LaunchCheck:
+    """What would happen if this VM were started now, without starting it."""
+    cfg = cfg or config.load()
+    if name not in cfg.vms:
+        raise VmError(f"VM '{name}' not found")
+    prof = profiles.get(profile or cfg.vms[name].profile or cfg.default_profile)
+    return profiles.check_launch(prof, socks_port=cfg.tor.socks_port,
+                                 vpn_interface=cfg.vpn.interface)

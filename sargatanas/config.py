@@ -183,3 +183,94 @@ def migrate_legacy_if_needed() -> bool:
     cfg = Config.from_dict(raw)
     save(cfg)
     return True
+
+
+# ---------- editing (shared by the CLI and the GUI) ----------
+
+class SettingsError(ValueError):
+    """A user-supplied value is invalid; the message is shown verbatim."""
+
+
+def _port(value: object, name: str) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise SettingsError(f"{name} must be a number") from None
+    if not 1 <= port <= 65535:
+        raise SettingsError(f"{name} must be between 1 and 65535")
+    return port
+
+
+def _forwards(values: list[str]) -> list[str]:
+    """Validate 'host:guest' port forwards, which become QEMU hostfwd."""
+    clean = []
+    for item in values:
+        item = (item or "").strip()
+        if not item:
+            continue
+        if item.count(":") != 1:
+            raise SettingsError(f"Port forward '{item}' must look like 2222:22")
+        host, guest = item.split(":")
+        _port(host, f"Host port in '{item}'")
+        _port(guest, f"Guest port in '{item}'")
+        clean.append(f"{host}:{guest}")
+    return clean
+
+
+def update_tor(cfg: Config, **changes: Any) -> Config:
+    for key in ("socks_port", "control_port", "dns_port", "trans_port"):
+        if key in changes:
+            setattr(cfg.tor, key, _port(changes[key], key.replace("_", " ")))
+    if "bridges" in changes:
+        bridges = changes["bridges"]
+        cfg.tor.bridges = [b.strip() for b in bridges if b and b.strip()]
+    for key in ("exit_nodes", "control_password"):
+        if key in changes:
+            value = changes[key]
+            setattr(cfg.tor, key, (value or "").strip() or None)
+    if "strict_nodes" in changes:
+        cfg.tor.strict_nodes = bool(changes["strict_nodes"])
+    return cfg
+
+
+def update_vpn(cfg: Config, **changes: Any) -> Config:
+    if "provider" in changes:
+        provider = (changes["provider"] or "").strip() or None
+        if provider not in (None, "wireguard", "openvpn"):
+            raise SettingsError("VPN provider must be wireguard or openvpn")
+        cfg.vpn.provider = provider
+    for key in ("interface", "config_file"):
+        if key in changes:
+            setattr(cfg.vpn, key, (changes[key] or "").strip() or None)
+    if "kill_switch" in changes:
+        cfg.vpn.kill_switch = bool(changes["kill_switch"])
+    return cfg
+
+
+def update_network(cfg: Config, **changes: Any) -> Config:
+    if "mode" in changes:
+        mode = (changes["mode"] or "").strip()
+        if mode not in ("nat", "isolated", "none", "bridge"):
+            raise SettingsError("Network mode must be nat, isolated, none or bridge")
+        cfg.network.mode = mode
+    if "forwards" in changes:
+        cfg.network.forwards = _forwards(list(changes["forwards"]))
+    return cfg
+
+
+def update_defaults(cfg: Config, **changes: Any) -> Config:
+    from . import profiles
+    for key in ("default_ram", "default_cpus", "default_disk_gb"):
+        if key in changes:
+            try:
+                value = int(changes[key])
+            except (TypeError, ValueError):
+                raise SettingsError(f"{key.replace('_', ' ')} must be a number") from None
+            if value <= 0:
+                raise SettingsError(f"{key.replace('_', ' ')} must be positive")
+            setattr(cfg, key, value)
+    if "default_profile" in changes:
+        key = (changes["default_profile"] or "").strip()
+        profiles.get(key)  # raises KeyError for unknown tiers
+        cfg.default_profile = key
+    return cfg
