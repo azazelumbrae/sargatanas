@@ -18,7 +18,12 @@ from sargatanas import config, paths, profiles, qemu, torcfg, torctl, vm, vpn
 
 
 class TempHome(unittest.TestCase):
-    """Point SARGATANAS_HOME at a fresh temp dir for every test."""
+    """Point SARGATANAS_HOME at a fresh temp dir for every test.
+
+    Also fakes the QEMU binaries: tests must never depend on the host having
+    QEMU installed (CI runners do not, and that is how four tests silently
+    only passed on the author's machine).
+    """
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -26,6 +31,15 @@ class TempHome(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {"SARGATANAS_HOME": self.tmp.name})
         patcher.start()
         self.addCleanup(patcher.stop)
+
+        # Pretend qemu-system-* and qemu-img are installed.
+        for name in ("find_qemu", "find_qemu_img"):
+            p = mock.patch.object(qemu, name, return_value=f"/usr/bin/{name}")
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.object(qemu, "sandbox_supported", return_value=False)
+        p.start()
+        self.addCleanup(p.stop)
 
     def write_config(self, data: dict) -> None:
         Path(self.tmp.name).mkdir(parents=True, exist_ok=True)
@@ -306,8 +320,9 @@ class TestVm(TempHome):
 
     def test_create_rejects_tor_without_cloud_image(self):
         # Tor routing needs cloud-init; a blank disk cannot apply the rules.
-        with self.assertRaises(vm.VmError) as ctx:
-            vm.create("tornodisk", profile="tor")
+        with mock.patch("sargatanas.qemu.create_disk"):
+            with self.assertRaises(vm.VmError) as ctx:
+                vm.create("tornodisk", profile="tor")
         self.assertIn("cloud image", str(ctx.exception))
 
     def test_start_refuses_when_profile_unverifiable(self):
