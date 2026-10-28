@@ -105,7 +105,7 @@ def available_images(arch: str | None = None) -> dict[str, CloudImage]:
 
 
 def image_path(key: str) -> Path:
-    return paths.iso_dir() / f"{key}-cloud.qcow2"
+    return paths.iso_dir() / f"{key}-nocloud.qcow2"
 
 
 def pull(key: str) -> Path:

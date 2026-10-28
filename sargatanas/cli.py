@@ -140,6 +140,24 @@ def cmd_images(args: argparse.Namespace) -> int:
 
 def cmd_create(args: argparse.Namespace) -> int:
     iso = args.iso
+    if args.cloud:
+        from . import cloud
+        if args.cloud not in cloud.available_images():
+            print(color(f"[-] Unknown cloud image '{args.cloud}'. "
+                        f"Known: {', '.join(cloud.available_images())}", RED))
+            return 1
+        dest = cloud.image_path(args.cloud)
+        if dest.exists():
+            print(color(f"[*] Using cached image: {dest.name}", DIM))
+        else:
+            print(color(f"[*] Downloading {args.cloud} cloud image (~"
+                        f"{cloud.available_images()[args.cloud].size_mb} MB)…", YELLOW))
+            try:
+                cloud.pull(args.cloud)
+            except cloud.CloudError as exc:
+                print(color(f"[-] {exc}", RED))
+                return 1
+            print(color(f"[+] Image ready: {dest}", GREEN))
     if iso and iso.lower() in ("pick", "-"):
         isos = find_isos()
         if not isos:
@@ -151,7 +169,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         iso = str(isos[int(choice) - 1])
     created = vm.create(args.name, iso=iso, ram=args.ram, cpus=args.cpus,
                         disk_gb=args.disk, profile=args.profile,
-                        image=args.image)
+                        image=args.image, cloud=args.cloud)
     print(color(f"[+] VM '{created.name}' created ({args.disk or 'default'} GB disk)", GREEN))
     return 0
 
@@ -447,6 +465,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name")
     s.add_argument("--iso", help="ISO path, or 'pick' to choose from a list")
     s.add_argument("--image", help="Cloud image (.qcow2) instead of a blank disk")
+    s.add_argument("--cloud", help="Cloud image key (alpine, debian); downloads if missing")
     s.add_argument("--ram", type=int, help="RAM in MB")
     s.add_argument("--cpus", type=int)
     s.add_argument("--disk", type=int, help="Disk size in GB")

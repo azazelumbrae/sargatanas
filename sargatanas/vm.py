@@ -74,7 +74,14 @@ def _clear_pid(name: str) -> None:
 def create(name: str, *, iso: str | None = None, ram: int | None = None,
            cpus: int | None = None, disk_gb: int | None = None,
            profile: str | None = None, image: str | None = None,
+           cloud: str | None = None,
            cfg: config.Config | None = None) -> config.VmConfig:
+    """Create a VM.
+
+    `cloud` is a key from sargatanas.cloud (e.g. "alpine"): the image is
+    downloaded if missing and used as the disk, so a Tor-ready VM is one
+    command away.
+    """
     name = validate_name(name)
     cfg = cfg or config.load()
     if name in cfg.vms:
@@ -82,6 +89,13 @@ def create(name: str, *, iso: str | None = None, ram: int | None = None,
 
     profile = profile or cfg.default_profile
     prof = profiles.get(profile)  # validate early
+
+    if cloud:
+        from . import cloud as cloudmod
+        if not cloudmod.seed_supported() and prof.needs_tor_routing:
+            raise VmError("Cannot build the cloud-init seed on this host "
+                          "(need hdiutil or genisoimage/xorriso)")
+        image = str(cloudmod.pull(cloud))
 
     if iso:
         iso_path = Path(iso).expanduser()

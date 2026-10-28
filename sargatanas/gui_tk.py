@@ -129,6 +129,7 @@ class App(tk.Tk):
         self.nb.pack(fill="both", expand=True)
         self.nb.add(self._machines_tab(), text="  Machines  ")
         self.nb.add(self._create_tab(), text="  Create  ")
+        self.nb.add(self._images_tab(), text="  Images  ")
         self.nb.add(self._isos_tab(), text="  ISOs  ")
         self.nb.add(self._profiles_tab(), text="  Profiles  ")
         self.nb.add(self._security_tab(), text="  Security  ")
@@ -229,6 +230,8 @@ class App(tk.Tk):
 
         self.name_var = tk.StringVar()
         self.iso_path_var = tk.StringVar()
+        self.cloud_key = tk.StringVar(value="")
+        self.source_var = tk.StringVar(value="blank")
         self.ram_var = tk.IntVar(value=self.cfg.default_ram)
         self.cpu_var = tk.IntVar(value=self.cfg.default_cpus)
         self.disk_var = tk.IntVar(value=self.cfg.default_disk_gb)
@@ -241,6 +244,16 @@ class App(tk.Tk):
 
         row(0, "Name", ttk.Entry(form, textvariable=self.name_var))
 
+        # Source selector: a blank disk, an ISO installer, or a cloud image.
+        src = tk.Frame(form, bg=BG)
+        src.grid(row=1, column=0, columnspan=2, sticky="w", pady=6)
+        tk.Label(src, text="Source", bg=BG, fg=TEXT).pack(side="left", padx=(0, 12))
+        for value, label in (("blank", "Blank disk"), ("iso", "ISO installer"),
+                             ("cloud", "Cloud image")):
+            ttk.Radiobutton(src, text=label, value=value, variable=self.source_var,
+                            command=self._on_source_change).pack(side="left", padx=6)
+
+        # ISO picker
         self._iso_names = ["No ISO"]
         self._iso_paths = [""]
         for p in _find_isos():
@@ -249,20 +262,66 @@ class App(tk.Tk):
         self.iso_combo = ttk.Combobox(form, values=self._iso_names, state="readonly")
         self.iso_combo.current(0)
         self.iso_combo.bind("<<ComboboxSelected>>", self._on_iso_selected)
-        row(1, "ISO", self.iso_combo)
-        row(2, "RAM (MB)", ttk.Spinbox(form, from_=256, to=65536, increment=256,
+        row(2, "ISO", self.iso_combo)
+
+        # Cloud image picker
+        self.cloud_combo = ttk.Combobox(form, values=self._cloud_choices(),
+                                        state="readonly")
+        self.cloud_combo.bind("<<ComboboxSelected>>", self._on_cloud_selected)
+        row(3, "Cloud image", self.cloud_combo)
+        self.cloud_hint = tk.Label(form, text="", bg=BG, fg=MUTED, anchor="w",
+                                   font=("Menlo", 10))
+        self.cloud_hint.grid(row=4, column=1, sticky="ew")
+
+        row(5, "RAM (MB)", ttk.Spinbox(form, from_=256, to=65536, increment=256,
                                        textvariable=self.ram_var))
-        row(3, "CPUs", ttk.Spinbox(form, from_=1, to=32, increment=1, textvariable=self.cpu_var))
-        row(4, "Disk (GB)", ttk.Spinbox(form, from_=1, to=1024, increment=1,
+        row(6, "CPUs", ttk.Spinbox(form, from_=1, to=32, increment=1, textvariable=self.cpu_var))
+        row(7, "Disk (GB)", ttk.Spinbox(form, from_=1, to=1024, increment=1,
                                         textvariable=self.disk_var))
-        row(5, "Profile", ttk.Combobox(form, textvariable=self.profile_var,
+        row(8, "Profile", ttk.Combobox(form, textvariable=self.profile_var,
                                        values=list(profiles.PROFILES), state="readonly"))
         form.columnconfigure(1, weight=1)
 
         ttk.Button(form, text="Create machine", style="Accent.TButton",
-                   command=self._create).grid(row=6, column=0, columnspan=2, sticky="ew",
+                   command=self._create).grid(row=9, column=0, columnspan=2, sticky="ew",
                                               pady=14)
+        self._on_source_change()
         return frame
+
+    @staticmethod
+    def _cloud_choices() -> list[str]:
+        from . import cloud
+        return [f"{k} — {v.name} (~{v.size_mb} MB)"
+                for k, v in cloud.available_images().items()]
+
+    def _on_source_change(self) -> None:
+        src = self.source_var.get()
+        state_iso = "readonly" if src == "iso" else "disabled"
+        state_cloud = "readonly" if src == "cloud" else "disabled"
+        self.iso_combo.configure(state=state_iso)
+        self.cloud_combo.configure(state=state_cloud)
+        if src == "cloud" and not self.cloud_key.get():
+            from . import cloud
+            first = next(iter(cloud.available_images()), "")
+            if first:
+                self.cloud_combo.current(0)
+                self._on_cloud_selected()
+
+    def _on_cloud_selected(self, _event=None) -> None:
+        from . import cloud
+        idx = self.cloud_combo.current()
+        keys = list(cloud.available_images())
+        if not 0 <= idx < len(keys):
+            return
+        key = keys[idx]
+        self.cloud_key.set(key)
+        dest = cloud.image_path(key)
+        if dest.exists():
+            self.cloud_hint.configure(text=f"cached: {dest.name}", fg=OK)
+        else:
+            self.cloud_hint.configure(
+                text=f"will download on create (~{cloud.available_images()[key].size_mb} MB)",
+                fg=MUTED)
 
     def _on_iso_selected(self, _event=None) -> None:
         idx = self.iso_combo.current()
@@ -276,15 +335,35 @@ class App(tk.Tk):
             self.iso_combo.configure(values=self._iso_names)
         self.iso_path_var.set(path)
         self.iso_combo.current(self._iso_paths.index(path))
+        self.source_var.set("iso")
+        self._on_source_change()
 
     def _create(self) -> None:
         name = self.name_var.get().strip()
         if not name:
             self._fail("Enter a name")
             return
-        kwargs = dict(iso=self.iso_path_var.get() or None, ram=self.ram_var.get(),
-                      cpus=self.cpu_var.get(), disk_gb=self.disk_var.get(),
-                      profile=self.profile_var.get() or self.cfg.default_profile)
+        src = self.source_var.get()
+        profile = self.profile_var.get() or self.cfg.default_profile
+        kwargs = dict(ram=self.ram_var.get(), cpus=self.cpu_var.get(), profile=profile)
+        if src == "blank":
+            kwargs["disk_gb"] = self.disk_var.get()
+        elif src == "iso":
+            iso = self.iso_path_var.get()
+            if not iso:
+                self._fail("Choose an ISO")
+                return
+            kwargs["iso"] = iso
+            kwargs["disk_gb"] = self.disk_var.get()
+        else:
+            key = self.cloud_key.get()
+            if not key:
+                self._fail("Choose a cloud image")
+                return
+            if profiles.get(profile).needs_tor_routing:
+                self.set_status(f"'{name}': Tor tier selected — this image will be "
+                                "seeded to route through Tor")
+            kwargs["cloud"] = key
         self.set_status(f"Creating '{name}'…")
 
         def worker():
@@ -296,6 +375,92 @@ class App(tk.Tk):
                 self._queue.put(("created", name, None))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    # ---------- Images ----------
+
+    def _images_tab(self) -> ttk.Frame:
+        from . import cloud
+        frame = ttk.Frame()
+        box, inner = self._section(frame, "Cloud images")
+        box.pack(fill="both", expand=True)
+        tk.Label(inner,
+                 text="Cloud images boot straight into a working system and accept "
+                      "the Tor seed.\nDownload once, reuse forever.",
+                 bg=BG, fg=MUTED, justify="left").pack(anchor="w", pady=(0, 8))
+
+        self.img_tree = ttk.Treeview(inner, columns=("key", "size", "status", "name"),
+                                     show="headings", height=6)
+        for c, label, w in (("key", "Key", 90), ("size", "Size", 80),
+                            ("status", "Status", 120), ("name", "Image", 320)):
+            self.img_tree.heading(c, text=label)
+            self.img_tree.column(c, width=w, anchor="w")
+        self.img_tree.pack(fill="x")
+        self.img_tree.tag_configure("ready", foreground=OK)
+        self.img_tree.tag_configure("missing", foreground=MUTED)
+
+        bar = ttk.Frame(inner)
+        bar.pack(fill="x", pady=10)
+        self._button(bar, "⬇ Download", self._download_selected, "Accent.TButton")
+        self._button(bar, "→ Use in new VM", self._use_image)
+        self._button(bar, "↻ Refresh", self._refresh_images)
+        self.img_progress = tk.Label(inner, text="", bg=BG, fg=MUTED, anchor="w",
+                                     font=("Menlo", 10))
+        self.img_progress.pack(fill="x")
+        del cloud
+        self._refresh_images()
+        return frame
+
+    def _refresh_images(self) -> None:
+        from . import cloud
+        for i in self.img_tree.get_children():
+            self.img_tree.delete(i)
+        for key, img in cloud.available_images().items():
+            ready = cloud.image_path(key).exists()
+            self.img_tree.insert("", "end",
+                                 values=(key, f"{img.size_mb} MB",
+                                         "downloaded" if ready else "missing", img.name),
+                                 tags=("ready" if ready else "missing",))
+
+    def _download_selected(self) -> None:
+        from . import cloud
+        sel = self.img_tree.selection()
+        if not sel:
+            self._fail("Select an image to download")
+            return
+        key = self.img_tree.item(sel[0])["values"][0]
+        if cloud.image_path(key).exists():
+            self.img_progress.configure(text=f"{key} already downloaded")
+            return
+        self.img_progress.configure(
+            text=f"Downloading {key}… this can take a few minutes ({cloud.available_images()[key].size_mb} MB)")
+        self.set_status(f"Downloading {key}…")
+
+        def worker():
+            try:
+                path = cloud.pull(key)
+            except Exception as exc:  # noqa: BLE001
+                self._queue.put(("error", str(exc), None))
+            else:
+                self._queue.put(("downloaded", f"{key} ready: {path.name}", None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _use_image(self) -> None:
+        from . import cloud
+        sel = self.img_tree.selection()
+        if not sel:
+            self._fail("Select an image")
+            return
+        key = self.img_tree.item(sel[0])["values"][0]
+        if not cloud.image_path(key).exists():
+            self._fail(f"{key} is not downloaded yet. Use Download first.")
+            return
+        self.source_var.set("cloud")
+        self._on_source_change()
+        idx = list(cloud.available_images()).index(key)
+        self.cloud_combo.current(idx)
+        self._on_cloud_selected()
+        self.nb.select(1)
 
     # ---------- ISOs ----------
 
@@ -715,6 +880,11 @@ class App(tk.Tk):
                     self.refresh_vms()
                     self.set_status(f"'{payload}' created")
                     self.nb.select(0)
+                elif kind == "downloaded":
+                    self.img_progress.configure(text=payload or "", fg=OK)
+                    self.set_status("Image ready")
+                    self._refresh_images()
+                    self._on_cloud_selected()
                 elif kind == "launched":
                     self.set_status(payload)
                     self.after(800, self.refresh_vms)
@@ -730,8 +900,10 @@ class App(tk.Tk):
         if idx == 0:
             self.refresh_vms()
         elif idx == 2:
+            self._refresh_images()
+        elif idx == 3:
             self._refresh_isos()
-        elif idx == 4:
+        elif idx == 5:
             self._refresh_security()
 
     def _quick_boot_selected(self) -> None:
