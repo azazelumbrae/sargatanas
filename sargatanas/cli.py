@@ -113,6 +113,31 @@ def cmd_list(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_images(args: argparse.Namespace) -> int:
+    from . import cloud
+    banner()
+    if args.action == "pull":
+        try:
+            path = cloud.pull(args.key)
+        except cloud.CloudError as exc:
+            print(color(f"[-] {exc}", RED))
+            return 1
+        print(color(f"[+] Image ready: {path}", GREEN))
+        return 0
+
+    images = cloud.available_images()
+    print(f"  {'KEY':<10} {'SIZE':>7}  STATUS       NAME")
+    print("  " + "─" * 66)
+    for key, img in images.items():
+        present = cloud.image_path(key).exists()
+        status = color("downloaded", GREEN) if present else color("missing", YELLOW)
+        print(f"  {key:<10} {img.size_mb:>5} MB  {status:<20} {img.name}")
+    print()
+    print(color("  Pull with: sargatanas images pull <key>", DIM))
+    print(color("  Cloud images are required for the tor/stealth tiers.", DIM))
+    return 0
+
+
 def cmd_create(args: argparse.Namespace) -> int:
     iso = args.iso
     if iso and iso.lower() in ("pick", "-"):
@@ -125,7 +150,8 @@ def cmd_create(args: argparse.Namespace) -> int:
         choice = input("\n ISO: ").strip()
         iso = str(isos[int(choice) - 1])
     created = vm.create(args.name, iso=iso, ram=args.ram, cpus=args.cpus,
-                        disk_gb=args.disk, profile=args.profile)
+                        disk_gb=args.disk, profile=args.profile,
+                        image=args.image)
     print(color(f"[+] VM '{created.name}' created ({args.disk or 'default'} GB disk)", GREEN))
     return 0
 
@@ -420,6 +446,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("create", help="Create a VM")
     s.add_argument("name")
     s.add_argument("--iso", help="ISO path, or 'pick' to choose from a list")
+    s.add_argument("--image", help="Cloud image (.qcow2) instead of a blank disk")
     s.add_argument("--ram", type=int, help="RAM in MB")
     s.add_argument("--cpus", type=int)
     s.add_argument("--disk", type=int, help="Disk size in GB")
@@ -454,6 +481,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--profile", choices=list(profiles.PROFILES))
     s.add_argument("--headless", action="store_true")
     s.set_defaults(func=cmd_boot)
+
+    s = sub.add_parser("images", help="List or download cloud images")
+    img_sub = s.add_subparsers(dest="action")
+    img_sub.add_parser("list", help="List known cloud images")
+    img_pull = img_sub.add_parser("pull", help="Download a cloud image")
+    img_pull.add_argument("key", choices=["alpine", "debian"])
+    s.set_defaults(func=cmd_images, action="list")
 
     s = sub.add_parser("profiles", help="Explain the security profiles")
     s.set_defaults(func=cmd_profiles)

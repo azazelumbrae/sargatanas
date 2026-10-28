@@ -211,13 +211,16 @@ class TestProfiles(unittest.TestCase):
             check = profiles.check_launch(profiles.get("stealth"), vpn_interface="wg0")
         self.assertFalse(check.ok)
 
-    def test_tor_has_no_hostfwd_and_no_socks(self):
-        # The invalid `socks=` option was removed; tor is a guard that boots
-        # with outbound-only user networking (no inbound ports).
-        args = self.net("tor", socks_port=9050)
-        self.assertEqual(args[1], "user,id=net0")
-        self.assertNotIn("hostfwd", " ".join(args))
-        self.assertNotIn("socks=", " ".join(args))
+    def test_tor_exposes_endpoints_via_guestfwd(self):
+        # QEMU has no proxy option, so Tor is spliced into the guest instead:
+        # TransPort 9040, SOCKS 9050 and DNSPort 9053, reachable at 10.0.2.100.
+        args = self.net("tor", socks_port=9050, trans_port=9040, dns_port=9053)
+        netdev = args[1]
+        self.assertIn("guestfwd=tcp:10.0.2.100:9040", netdev)
+        self.assertIn("guestfwd=tcp:10.0.2.100:9050", netdev)
+        self.assertIn("guestfwd=tcp:10.0.2.100:9053", netdev)
+        self.assertIn("127.0.0.1 9040", netdev)
+        self.assertNotIn("hostfwd", netdev)
 
     def test_vpn_uses_nat_networking(self):
         args = self.net("vpn", forwards=["2222:22"])
@@ -234,9 +237,26 @@ class TestProfiles(unittest.TestCase):
         self.assertFalse(check.ok)
         self.assertIn("SOCKS", check.reasons[0])
 
-    def test_tor_profile_allows_when_socks_up(self):
-        with mock.patch.object(profiles, "tor_socks_reachable", return_value=True):
+    def test_tor_profile_allows_when_socks_and_trans_port_up(self):
+        with mock.patch.object(profiles, "tor_socks_reachable", return_value=True), \
+             mock.patch.object(profiles, "_tor_trans_port_reachable", return_value=True), \
+             mock.patch.object(profiles.shutil, "which", return_value="/usr/bin/nc"):
             self.assertTrue(profiles.check_launch(profiles.get("tor")).ok)
+
+    def test_tor_profile_blocks_without_trans_port(self):
+        with mock.patch.object(profiles, "tor_socks_reachable", return_value=True), \
+             mock.patch.object(profiles, "_tor_trans_port_reachable", return_value=False), \
+             mock.patch.object(profiles.shutil, "which", return_value="/usr/bin/nc"):
+            check = profiles.check_launch(profiles.get("tor"))
+        self.assertFalse(check.ok)
+        self.assertIn("TransPort", check.reasons[0])
+
+    def test_tor_profile_blocks_without_netcat(self):
+        with mock.patch.object(profiles, "tor_socks_reachable", return_value=True), \
+             mock.patch.object(profiles, "_tor_trans_port_reachable", return_value=True), \
+             mock.patch.object(profiles.shutil, "which", return_value=None):
+            check = profiles.check_launch(profiles.get("tor"))
+        self.assertFalse(check.ok)
 
     def test_vpn_profile_blocks_without_interface(self):
         with mock.patch.object(profiles, "vpn_interface_up", return_value=False):
@@ -295,9 +315,16 @@ class TestVm(TempHome):
         self.assertFalse(vm.is_running("stale"))
         self.assertFalse(pid.exists())
 
+    def test_create_rejects_tor_without_cloud_image(self):
+        # Tor routing needs cloud-init; a blank disk cannot apply the rules.
+        with self.assertRaises(vm.VmError) as ctx:
+            vm.create("tornodisk", profile="tor")
+        self.assertIn("cloud image", str(ctx.exception))
+
     def test_start_refuses_when_profile_unverifiable(self):
         with mock.patch("sargatanas.qemu.create_disk"):
-            vm.create("t", profile="tor")
+            vm.create("t", profile="nat")
+            vm.set_profile("t", "tor")
         with mock.patch.object(profiles, "tor_socks_reachable", return_value=False):
             with self.assertRaises(vm.VmError):
                 vm.start("t")
@@ -379,6 +406,44 @@ class TestProcess(unittest.TestCase):
         proc.kill.assert_called_once()
 
 
+class TestCloud(TempHome):
+    def test_known_images(self):
+        from sargatanas import cloud
+        images = cloud.available_images("aarch64")
+        self.assertIn("alpine", images)
+        self.assertIn("debian", images)
+        self.assertTrue(all(i.url.startswith("https://") for i in images.values()))
+
+    def test_unknown_image_rejected(self):
+        from sargatanas import cloud
+        with self.assertRaises(cloud.CloudError):
+            cloud.pull("windows")
+
+    def test_tor_user_data_has_redirect_rules(self):
+        from sargatanas import cloud
+        yaml = cloud.user_data_tor()
+        self.assertIn("#cloud-config", yaml)
+        self.assertIn("REDIRECT --to-ports 9040", yaml)
+        self.assertIn("10.0.2.100", yaml)
+        self.assertIn("/usr/local/bin/sargatanas-tor", yaml)
+
+    def test_cloud_init_detection(self):
+        from sargatanas import cloud
+        self.assertTrue(cloud.has_cloud_init(Path("alpine-cloud-3.24.3.qcow2")))
+        self.assertTrue(cloud.has_cloud_init(Path("debian-12-genericcloud-arm64.qcow2")))
+        self.assertFalse(cloud.has_cloud_init(Path("alpine-virt-3.24.3.iso")))
+        self.assertFalse(cloud.has_cloud_init(Path("win11.qcow2")))
+
+    def test_seed_builds_a_cidata_iso(self):
+        from sargatanas import cloud
+        if not cloud.seed_supported():
+            self.skipTest("no ISO builder on this host")
+        dest = Path(self.tmp.name) / "seed.iso"
+        cloud.write_seed(dest, cloud.user_data_tor())
+        self.assertTrue(dest.exists())
+        self.assertIn(b"CD001", dest.read_bytes()[:40000])  # ISO9660 signature
+
+
 class TestSettings(TempHome):
     def test_tor_port_validated(self):
         cfg = config.Config()
@@ -442,7 +507,8 @@ class TestProfileSwitch(TempHome):
 
     def test_launch_state_reports_blocker(self):
         with mock.patch("sargatanas.qemu.create_disk"):
-            vm.create("r", profile="tor")
+            vm.create("r", profile="nat")
+            vm.set_profile("r", "tor")
         with mock.patch.object(profiles, "tor_socks_reachable", return_value=False):
             check = vm.launch_state("r")
         self.assertFalse(check.ok)

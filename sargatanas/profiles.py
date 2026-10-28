@@ -5,7 +5,7 @@ Tiers, from most closed to most open:
     paranoid     air-gapped + seccomp sandbox
     isolated     air-gapped (no network device)
     stealth      requires Tor SOCKS AND a VPN interface; outbound-only
-    tor          requires Tor SOCKS; outbound-only
+    tor          routes the guest through Tor via guestfwd + cloud-init
     vpn          requires a VPN interface; NAT egress
     pentesting   internal VM<->VM network + NAT internet for tools
     nat          NAT with port forwards (default)
@@ -47,18 +47,23 @@ class Profile:
     needs: tuple[str, ...] = ()        # runtime requirements, checked at launch
     sandbox: bool = False              # request `-sandbox on` where QEMU supports it
 
+    @property
+    def needs_tor_routing(self) -> bool:
+        """Tiers that require in-guest Tor routing via a cloud-init seed."""
+        return self.network == "tor"
+
     def describe_limits(self) -> list[str]:
         """Caveats, so a tier never promises more than it delivers."""
         if self.key == "tor":
             return [
-                "Verifies Tor is reachable; does not transparently redirect traffic",
-                "Guest apps must be pointed at the host Tor SOCKS manually",
-                "TCP only - UDP/DNS over Tor is not handled",
+                "Requires a cloud image with cloud-init (see: sargatanas images)",
+                "TCP traffic is redirected into Tor inside the guest",
+                "Needs Tor running with TransPort enabled on the host",
             ]
         if self.key == "stealth":
             return [
-                "Verifies Tor and VPN are both up; does not transparently chain them",
-                "The actual VPN+Tor chaining must be configured on the host",
+                "Requires a cloud image with cloud-init and a running VPN",
+                "Tor routing is applied inside the guest; VPN is a host-level guard",
             ]
         if self.key == "vpn":
             return [
@@ -86,8 +91,9 @@ class Profile:
             rules = ["VM<->VM only over multicast",
                      "No host access, no internet"]
         elif net == "tor":
-            rules = ["Outbound-only NAT: no inbound ports",
-                     "Requires a Tor SOCKS listener (verified at launch)"]
+            rules = ["No inbound ports",
+                     "guestfwd exposes Tor TransPort/SOCKS/DNS at 10.0.2.100",
+                     "cloud-init redirects all guest TCP into TransPort"]
         elif net == "vpn":
             rules = ["NAT egress follows the host VPN",
                      "Requires the VPN interface up (verified at launch)"]
@@ -118,14 +124,14 @@ PROFILES: dict[str, Profile] = {
     ),
     "stealth": Profile(
         key="stealth",
-        summary="Requires Tor and a VPN, boots with no inbound ports.",
+        summary="Tor routing inside the guest plus a verified VPN tunnel.",
         network="tor",
         needs=("tor-socks", "vpn-interface"),
         sandbox=True,
     ),
     "tor": Profile(
         key="tor",
-        summary="Requires a Tor SOCKS listener, boots with no inbound ports.",
+        summary="Routes all guest traffic through Tor (cloud image required).",
         network="tor",
         needs=("tor-socks",),
     ),
@@ -187,6 +193,15 @@ def tor_installed() -> bool:
     return shutil.which("tor") is not None
 
 
+def _tor_trans_port_reachable(port: int = 9040) -> bool:
+    """TransPort is what iptables REDIRECT feeds; SOCKS alone is not enough."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
 def vpn_interface_up(interface: str | None) -> bool:
     """Check for an up tunnel interface, per platform."""
     if not interface:
@@ -221,6 +236,15 @@ def check_launch(profile: Profile, *, socks_port: int = 9050,
             check.ok = False
             check.reasons.append(
                 f"Tor SOCKS listener not reachable on 127.0.0.1:{socks_port}{hint}")
+        elif not _tor_trans_port_reachable():
+            check.ok = False
+            check.reasons.append(
+                "Tor TransPort (9040) is not reachable; enable TransPort in torrc "
+                "(sargatanas tor config --output torrc)")
+        if not shutil.which("nc"):
+            check.ok = False
+            check.reasons.append(
+                "Netcat (nc) is required to splice Tor into the guest (guestfwd)")
     if "vpn-interface" in profile.needs:
         if not vpn_interface_up(vpn_interface):
             check.ok = False
@@ -251,15 +275,40 @@ def _internal_netdev(net_id: str) -> list[str]:
             "-device", f"virtio-net-pci,netdev={net_id}"]
 
 
+TOR_ENDPOINT = "10.0.2.100"
+
+
+def tor_guestfwd_args(socks_port: int = 9050, trans_port: int = 9040,
+                      dns_port: int = 9053) -> list[str]:
+    """Expose the host's Tor ports inside the guest, without root.
+
+    QEMU's user networking has no outbound-proxy option, so we push the
+    opposite direction: `guestfwd` splices a guest TCP port to a host
+    process. With cloud-init applying iptables REDIRECT rules to these ports
+    the guest's traffic ends up in Tor.
+    """
+    forwards = [
+        (9050, socks_port),   # SOCKS, for apps that speak it
+        (9040, trans_port),   # TransPort, target of the NAT redirect
+        (9053, dns_port),     # DNSPort, target of the DNS redirect
+    ]
+    opts = ",".join(
+        f"guestfwd=tcp:{TOR_ENDPOINT}:{guest}-cmd:nc 127.0.0.1 {host}"
+        for guest, host in forwards
+    )
+    return ["-netdev", f"user,id=net0,{opts}",
+            "-device", "virtio-net-pci,netdev=net0"]
+
+
 def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
-                      socks_port: int = 9050) -> list[str]:
+                      socks_port: int = 9050,
+                      trans_port: int = 9040, dns_port: int = 9053) -> list[str]:
     """Translate a profile into QEMU networking arguments.
 
-    `socks_port` is accepted for API stability; the guard profiles do not use
-    it because QEMU's user networking has no `socks=` option - pretending to
-    proxy the guest through Tor at the hypervisor layer would be a lie.
+    For `tor`/`stealth` the guest gets no inbound ports and the Tor endpoints
+    are spliced in. Routing is completed inside the guest by the cloud-init
+    seed (see cloud.py); QEMU alone cannot redirect traffic to a SOCKS proxy.
     """
-    del socks_port
     net = profile.network
     if net == "none":
         return []
@@ -270,7 +319,7 @@ def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
     if net == "internal":
         return _internal_netdev("net0")
     if net == "tor":
-        return _user_netdev("net0")  # outbound-only: no hostfwd
+        return tor_guestfwd_args(socks_port, trans_port, dns_port)
     if net == "vpn":
         return _user_netdev("net0", forwards)
     if net == "pentesting":

@@ -102,16 +102,32 @@ they cannot be honoured.
 |:-:|------|---------------|----------------------|:-------:|
 | 1 | 🔴 **`paranoid`** | No network device (air-gap) | — | ✅ |
 | 2 | 🟠 **`isolated`** | No network device (air-gap) | — | — |
-| 3 | 🟣 **`stealth`** | Outbound only, no inbound ports | **Tor** + **VPN** | ✅ |
-| 4 | 🟣 **`tor`** | Outbound only, no inbound ports | **Tor** | — |
+| 3 | 🟣 **`stealth`** | **All TCP -> Tor** + VPN tunnel | Tor, TransPort, VPN, cloud image | ✅ |
+| 4 | 🟣 **`tor`** | **All TCP -> Tor** | Tor + TransPort, cloud image | — |
 | 5 | 🔵 **`vpn`** | NAT through the tunnel | **VPN** | — |
 | 6 | 🟢 **`pentesting`** | Internal VM↔VM network + NAT | — | — |
 | 7 | ⚪ **`nat`** | NAT with port forwards | — | — |
 | 8 | ⚫ **`restricted`** | NIC present but isolated | — | — |
 
 > **Example:** `sargatanas create lab --profile stealth` only starts if a Tor
-> SOCKS listener **and** an active VPN interface are present. If either is
-> missing, the VM is not launched.
+> SOCKS listener, an active VPN interface and a cloud-init image are present.
+> If any is missing, the VM is not launched.
+
+### How Tor routing works
+
+QEMU's user networking has no outbound-proxy option, so the traffic is
+redirected **inside the guest**:
+
+```
+guest app -> iptables REDIRECT -> 10.0.2.100:9040 -> guestfwd -> host Tor TransPort
+```
+
+1. `guestfwd` splices the host's Tor TransPort (9040), SOCKS (9050) and
+   DNSPort (9053) into the guest at `10.0.2.100` — no root needed.
+2. A cloud-init `user-data` seeds the guest with the `iptables` rules, so
+   every outbound TCP connection (and DNS) goes through Tor from boot.
+3. Creating a `tor`/`stealth` VM without a cloud image is **rejected**, not
+   silently left unprotected.
 
 ---
 
@@ -321,7 +337,7 @@ What it explicitly does **not** do:
 
 | Limitation | Why |
 |------------|-----|
-| Transparent **Tor routing** | Requires a dedicated gateway (Whonix/Tails) |
+| Tor routing without a cloud image | A plain ISO has no cloud-init to apply the rules |
 | True **host-only** (VM↔host) | Requires `tap`/bridge with root |
 | **Kill switch** on macOS/Windows | Linux only (iptables) |
 

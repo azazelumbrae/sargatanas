@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,14 +73,15 @@ def _clear_pid(name: str) -> None:
 
 def create(name: str, *, iso: str | None = None, ram: int | None = None,
            cpus: int | None = None, disk_gb: int | None = None,
-           profile: str | None = None, cfg: config.Config | None = None) -> config.VmConfig:
+           profile: str | None = None, image: str | None = None,
+           cfg: config.Config | None = None) -> config.VmConfig:
     name = validate_name(name)
     cfg = cfg or config.load()
     if name in cfg.vms:
         raise VmError(f"VM '{name}' already exists")
 
     profile = profile or cfg.default_profile
-    profiles.get(profile)  # validate early
+    prof = profiles.get(profile)  # validate early
 
     if iso:
         iso_path = Path(iso).expanduser()
@@ -94,7 +96,24 @@ def create(name: str, *, iso: str | None = None, ram: int | None = None,
 
     disk = vm_path / f"{name}.qcow2"
     try:
-        qemu.create_disk(disk, disk_gb or cfg.default_disk_gb)
+        if image:
+            _install_cloud_image(Path(image).expanduser(), disk)
+        else:
+            qemu.create_disk(disk, disk_gb or cfg.default_disk_gb)
+
+        # Tor tier: the guest must be told to route. That only works with a
+        # cloud-init capable image, so refuse rather than silently degrade.
+        if prof.needs_tor_routing:
+            from . import cloud
+            if not image or not cloud.has_cloud_init(Path(image)):
+                raise VmError(
+                    f"Profile '{prof.key}' routes traffic through Tor inside the guest, "
+                    "which requires a cloud image with cloud-init. "
+                    "Use --image (see: sargatanas images list).")
+            if not cloud.seed_supported():
+                raise VmError("Cannot build the cloud-init seed on this host "
+                              "(need hdiutil or genisoimage/xorriso)")
+            cloud.write_seed(cloud.seed_path(disk), cloud.user_data_tor())
     except Exception:
         shutil.rmtree(vm_path, ignore_errors=True)
         raise
@@ -108,6 +127,17 @@ def create(name: str, *, iso: str | None = None, ram: int | None = None,
     cfg.vms[name] = vm
     config.save(cfg)
     return vm
+
+
+def _install_cloud_image(image: Path, disk: Path) -> None:
+    """Copy a cloud image into the VM directory as its disk."""
+    if not image.exists():
+        raise VmError(f"Cloud image not found: {image}")
+    result = subprocess.run([qemu.find_qemu_img(), "convert", "-O", "qcow2",
+                             str(image), str(disk)],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        raise qemu.QemuError(f"qemu-img convert failed: {result.stderr.strip()[:300]}")
 
 
 def delete(name: str, cfg: config.Config | None = None) -> None:
@@ -192,7 +222,14 @@ def start(name: str, *, live: bool = False, install: bool = False,
         prof,
         forwards=cfg.network.forwards,
         socks_port=cfg.tor.socks_port,
+        trans_port=cfg.tor.trans_port,
+        dns_port=cfg.tor.dns_port,
     ) + extra
+
+    # Attach the cloud-init seed so the guest applies Tor routing on boot.
+    seed = Path(vm.disk).parent / "seed.iso"
+    if prof.needs_tor_routing and seed.exists():
+        argv += ["-drive", f"file={seed},format=raw,if=virtio,readonly=on,media=cdrom"]
 
     if headless:
         # The guest's serial console owns the terminal until it exits.
