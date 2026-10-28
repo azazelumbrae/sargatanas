@@ -4,10 +4,9 @@
 
 # Sargatanas
 
-**Virtual machine manager with network isolation, built on QEMU**
+**Virtual machine manager for maximum anonymity**
 
-Create a VM, pick a security tier, boot it — and always know which protections
-are actually active.
+Privacy is a bless granted by design, do not let other decided your destiny.
 
 <br>
 
