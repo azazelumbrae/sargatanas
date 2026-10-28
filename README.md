@@ -322,10 +322,4 @@ What it explicitly does **not** do:
 | True **host-only** (VM↔host) | Requires `tap`/bridge with root |
 | **Kill switch** on macOS/Windows | Linux only (iptables) |
 
-<br>
-
-Made with ❤️ by [Álvaro Souza](https://github.com/mildredhoe)
-
-<sub>MIT · Based on <a href="https://github.com/bad-antics/n01d-machine">n01d-machine</a></sub>
-
 </div>
