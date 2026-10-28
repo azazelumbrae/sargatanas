@@ -24,3 +24,9 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# Build environments and PyInstaller output
+.venv-build/
+dist/
+build/
+*.spec

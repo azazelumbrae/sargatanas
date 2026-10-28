@@ -51,14 +51,30 @@ def _ensure_tcl_library() -> None:
             return
     except tk.TclError:
         pass
-    base = Path(sys.base_prefix)
-    for lib in (base / "lib" / "tcl8.6", base / "lib" / "tcl9.0", base / "lib" / "tcl9.1"):
-        if (lib / "init.tcl").exists():
-            os.environ["TCL_LIBRARY"] = str(lib)
-            tk_lib = base / "lib" / ("tk" + lib.name[len("tcl"):])
-            if (tk_lib / "tk.tcl").exists():
-                os.environ["TK_LIBRARY"] = str(tk_lib)
-            return
+
+    # Frozen builds (PyInstaller) unpack their data next to the executable;
+    # the interpreter's own prefix no longer exists.
+    roots = [Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "_MEIPASS", None) else None,
+             Path(sys.base_prefix)]
+    for root in [r for r in roots if r]:
+        for name in ("tcl9.1", "tcl9.0", "tcl8.6", "tcl8.5"):
+            lib = root / name
+            if (lib / "init.tcl").exists():
+                os.environ["TCL_LIBRARY"] = str(lib)
+                tk_name = "tk" + name[len("tcl"):]
+                tk_lib = root / tk_name
+                if (tk_lib / "tk.tcl").exists():
+                    os.environ["TK_LIBRARY"] = str(tk_lib)
+                return
+        # Standard interpreter layout: <base>/lib/tcl8.6
+        for name in ("tcl8.6", "tcl9.0", "tcl9.1"):
+            lib = root / "lib" / name
+            if (lib / "init.tcl").exists():
+                os.environ["TCL_LIBRARY"] = str(lib)
+                tk_lib = root / "lib" / ("tk" + name[len("tcl"):])
+                if (tk_lib / "tk.tcl").exists():
+                    os.environ["TK_LIBRARY"] = str(tk_lib)
+                return
 
 
 class App(tk.Tk):

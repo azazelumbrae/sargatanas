@@ -1,0 +1,95 @@
+name: Release binaries
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+            artifact: sargatanas-linux-x86_64
+          - os: macos-latest
+            python: "3.12"
+            artifact: sargatanas-macos-arm64
+          - os: windows-latest
+            python: "3.12"
+            artifact: sargatanas-windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # The runners' CPython ships Tk as separate modules, which PyInstaller
+      # can bundle. Tk itself needs system libraries on Linux.
+      - name: Install Tk (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq python3-tk xvfb
+
+      - name: Install build deps
+        run: python -m pip install --upgrade pip && python -m pip install . pyinstaller pillow
+
+      - name: Run tests first
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Build binary
+        run: python packaging/build.py
+
+      - name: Smoke test (Linux, headless)
+        if: runner.os == 'Linux'
+        run: |
+          ./dist/sargatanas --version
+          ./dist/sargatanas list || true
+          xvfb-run -a ./dist/sargatanas gui & sleep 6; kill %1 || true
+
+      - name: Smoke test (macOS/Windows)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: ./dist/sargatanas --version
+
+      - name: Package artefacts
+        shell: bash
+        run: |
+          mkdir -p out
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp dist/sargatanas.exe "out/sargatanas-${{ github.ref_name }}-windows-x86_64.exe"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            cp dist/sargatanas "out/sargatanas-${{ github.ref_name }}-macos-arm64"
+            [ -d dist/Sargatanas.app ] && ditto -c -k --sequesterRsrc \
+              dist/Sargatanas.app "out/Sargatanas-${{ github.ref_name }}-macos.app.zip"
+          else
+            cp dist/sargatanas "out/sargatanas-${{ github.ref_name }}-linux-x86_64"
+          fi
+          ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          draft: true
