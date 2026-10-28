@@ -519,6 +519,31 @@ class TestCloud(TempHome):
         self.assertIn("type = socks5", yaml)
         self.assertIn("/usr/local/bin/sargatanas-tor", yaml)
 
+    def test_ipv6_is_blocked_in_layers(self):
+        # redsocks is IPv4/TCP only; a single missing tool must not leave a
+        # silent IPv6 leak path.
+        from sargatanas import cloud
+        yaml = cloud.user_data_tor()
+        self.assertIn("ip6tables", yaml)
+        self.assertIn("install_pkg ip6tables", yaml)
+        self.assertIn("disable_ipv6=1", yaml)
+        self.assertIn("99-sargatanas-ipv6.conf", yaml)
+
+    def test_ipv6_failure_is_reported(self):
+        # The script must not claim success when IPv6 could not be disabled.
+        from sargatanas import cloud
+        yaml = cloud.user_data_tor()
+        self.assertIn("WARNING IPv6 could not be disabled", yaml)
+        self.assertIn("all IPv4 TCP now routed through Tor", yaml)
+
+    def test_generated_script_is_one_shell_block(self):
+        # A stray newline inside a quoted printf broke the YAML block before.
+        from sargatanas import cloud
+        body = cloud.user_data_tor().split("content: |")[1].split("runcmd:")[0]
+        for line in body.splitlines():
+            if line.strip():
+                self.assertTrue(line.startswith("      "), line)
+
     def test_cloud_init_detection(self):
         from sargatanas import cloud
         self.assertTrue(cloud.has_cloud_init(Path("alpine-cloud-3.24.3.qcow2")))

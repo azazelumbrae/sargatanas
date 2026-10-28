@@ -126,7 +126,11 @@ guest app -> iptables REDIRECT -> 10.0.2.100:9040 -> guestfwd -> host Tor TransP
    DNSPort (9053) into the guest at `10.0.2.100` — no root needed.
 2. A cloud-init `user-data` seeds the guest with the `iptables` rules, so
    every outbound TCP connection (and DNS) goes through Tor from boot.
-3. Creating a `tor`/`stealth` VM without a cloud image is **rejected**, not
+3. **IPv6 is switched off**, in three independent layers: the kernel sysctl,
+   `ip6tables` DROP rules on INPUT/OUTPUT/FORWARD, and a startup check that
+   warns if neither worked. redsocks only speaks IPv4/TCP, so an open IPv6
+   stack would be a silent leak.
+4. Creating a `tor`/`stealth` VM without a cloud image is **rejected**, not
    silently left unprotected.
 
 ---
@@ -425,6 +429,7 @@ What it explicitly does **not** do:
 |---|---|
 | Tor routing without a cloud image | A plain ISO has no cloud-init to apply the rules |
 | UDP (QUIC, UDP DNS) through Tor | redsocks redirects TCP only |
+| IPv6 through Tor | Not supported - IPv6 is disabled inside the guest instead |
 | True **host-only** (VM↔host) | Requires `tap`/bridge with root |
 | **Kill switch** on macOS/Windows | Implemented for Linux only |
 

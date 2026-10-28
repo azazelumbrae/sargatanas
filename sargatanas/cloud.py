@@ -156,6 +156,7 @@ install_pkg() {{
 }}
 
 command -v iptables >/dev/null 2>&1 || install_pkg iptables iptables-legacy || true
+command -v ip6tables >/dev/null 2>&1 || install_pkg ip6tables ip6tables-legacy || true
 command -v redsocks >/dev/null 2>&1 || install_pkg redsocks || true
 
 if ! command -v iptables >/dev/null 2>&1; then
@@ -197,9 +198,31 @@ iptables -t nat -C OUTPUT -d "$TOR_IP" -j RETURN 2>/dev/null ||
     iptables -t nat -A OUTPUT -d "$TOR_IP" -j RETURN
 iptables -t nat -C OUTPUT -p tcp -j REDIRECT --to-ports "$REDSOCKS" 2>/dev/null ||
     iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports "$REDSOCKS"
-# IPv6 has no route to Tor; drop it rather than leak.
-ip6tables -C OUTPUT -j REJECT 2>/dev/null || ip6tables -A OUTPUT -j REJECT 2>/dev/null || true
-echo "sargatanas: all TCP now routed through Tor"
+# IPv6 is blocked in three independent layers, because redsocks only speaks
+# IPv4/TCP and a single missing tool would silently leave a leak path:
+#   1. kernel sysctl  - stops the stack from ever preferring IPv6
+#   2. ip6tables      - denies the traffic if the sysctl is reset later
+#   3. explicit check - fail loudly instead of pretending to be safe
+sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
+sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
+for k in all default; do echo "net.ipv6.conf.$k.disable_ipv6 = 1"; done > /etc/sysctl.d/99-sargatanas-ipv6.conf 2>/dev/null || true
+
+if command -v ip6tables >/dev/null 2>&1; then
+    for chain in OUTPUT FORWARD INPUT; do
+        ip6tables -C "$chain" -j DROP 2>/dev/null ||
+            ip6tables -A "$chain" -j DROP 2>/dev/null || true
+    done
+fi
+
+# Report honestly: IPv4 through Tor is required, IPv6 is required to be off.
+IPV6_STATE=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo unknown)
+IPV6_RULES=$(ip6tables -S OUTPUT 2>/dev/null | grep -c DROP || echo 0)
+if [ "$IPV6_STATE" = "1" ] || [ "$IPV6_RULES" -ge 1 ]; then
+    echo "sargatanas: IPv6 disabled (sysctl=$IPV6_STATE, ip6tables_drop_rules=$IPV6_RULES)"
+else
+    echo "sargatanas: WARNING IPv6 could not be disabled - traffic may leak" >&2
+fi
+echo "sargatanas: all IPv4 TCP now routed through Tor"
 """
 
 TOR_USER_DATA = """#cloud-config
