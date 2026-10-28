@@ -1,19 +1,24 @@
 """Cloud images and cloud-init seeding.
 
 To make a VM *actually* route through Tor we cannot ask QEMU to do it: slirp
-has no outbound proxy option. The only honest way is for the guest itself to
-apply the redirect rules on first boot, which is exactly what cloud-init is
-for.
+has no outbound proxy option. The redirect has to happen inside the guest.
 
-Flow:
+Chain:
 
-    sargatanas images pull alpine          download a cloud image
-    sargatanas create lab --image alpine-cloud.qcow2 --profile tor
-        -> a cloud-init seed ISO is generated next to the disk
-        -> QEMU attaches it; the guest applies Tor routing on boot
+    guest app
+      -> iptables REDIRECT (all TCP, and DNS)
+      -> redsocks listening locally in the guest
+      -> SOCKS5 at 10.0.2.100:9050   (guestfwd spliced to the host's Tor)
+      -> Tor
 
-The seed is a tiny ISO9660 filesystem labelled CIDATA containing
-`user-data` and `meta-data`, which is the cloud-init "NoCloud" datasource.
+Why `redsocks` instead of Tor's TransPort: many packaged Tor builds (Homebrew
+on macOS among them) are compiled with transparent proxying disabled, so
+TransPort simply does not exist. redsocks speaks SOCKS, which every Tor build
+supports, so this path works everywhere. It also means the rules survive a
+guest reboot.
+
+The seed is a CIDATA ISO with `user-data`/`meta-data`, the cloud-init NoCloud
+datasource.
 """
 
 from __future__ import annotations
@@ -28,6 +33,8 @@ from pathlib import Path
 from . import paths
 
 SEED_LABEL = "cidata"
+REDSOCKS_PORT = 12345
+TOR_GATEWAY = "10.0.2.100"
 
 
 class CloudError(RuntimeError):
@@ -117,19 +124,57 @@ def pull(key: str) -> Path:
 
 # ---------- cloud-init payload ----------
 
-TOR_SCRIPT = r"""#!/bin/sh
-# Installed by Sargatanas. Routes all guest traffic through Tor.
-# 10.0.2.100 is a guestfwd endpoint exposing the host's Tor TransPort and
-# SOCKS port, so no host firewall or root privileges are needed.
+TOR_SCRIPT = f"""#!/bin/sh
+# Installed by Sargatanas: send all guest traffic through Tor.
+# {TOR_GATEWAY}:9050 is a guestfwd endpoint spliced to the host's Tor SOCKS
+# port, so no host firewall, no root on the host, no TransPort build needed.
 set -e
-TOR_IP=10.0.2.100
-# DNS through Tor's DNSPort
-printf 'nameserver %s\n' "$TOR_IP" > /etc/resolv.conf
-# Redirect every outbound TCP connection except the ones to Tor itself
-iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN 2>/dev/null || true
-iptables -t nat -A OUTPUT -d "$TOR_IP" -j RETURN
-iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports 9040
-ip6tables -t nat -A OUTPUT -j REJECT 2>/dev/null || true
+TOR_IP={TOR_GATEWAY}
+REDSOCKS={REDSOCKS_PORT}
+
+# redsocks is not in every base image; install it if missing.
+if ! command -v redsocks >/dev/null 2>&1; then
+    if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache redsocks >/dev/null 2>&1 || true
+    elif command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq >/dev/null 2>&1 || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq redsocks >/dev/null 2>&1 || true
+    fi
+fi
+
+cat > /etc/redsocks.conf <<EOF
+base {{
+    log_debug = off;
+    log_info = off;
+    daemon = on;
+    user = nobody;
+    group = nobody;
+}}
+redsocks {{
+    local_ip = 127.0.0.1;
+    local_port = $REDSOCKS;
+    ip = $TOR_IP;
+    port = 9050;
+    type = socks5;
+}}
+EOF
+
+# DNS first, so name resolution cannot leak before the redirect is in place.
+for ns in /etc/resolv.conf; do
+    printf 'nameserver %s\\n' "$TOR_IP" > "$ns" 2>/dev/null || true
+done
+
+redsocks -c /etc/redsocks.conf 2>/dev/null || redsocks -p /run/redsocks.pid -c /etc/redsocks.conf 2>/dev/null || true
+sleep 1
+
+# Everything outbound goes to redsocks, except the path to Tor itself.
+iptables -t nat -C OUTPUT -d "$TOR_IP" -j RETURN 2>/dev/null ||
+    iptables -t nat -A OUTPUT -d "$TOR_IP" -j RETURN
+iptables -t nat -C OUTPUT -p tcp -j REDIRECT --to-ports "$REDSOCKS" 2>/dev/null ||
+    iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports "$REDSOCKS"
+# IPv6 has no route to Tor; drop it rather than leak.
+ip6tables -C OUTPUT -j REJECT 2>/dev/null || ip6tables -A OUTPUT -j REJECT 2>/dev/null || true
+echo "sargatanas: all TCP now routed through Tor" >&2
 """
 
 TOR_USER_DATA = """#cloud-config
@@ -142,7 +187,7 @@ runcmd:
   - ["/usr/local/bin/sargatanas-tor"]
 """
 
-META_DATA = """instance-id: sargatanas-iid
+META_DATA = f"""instance-id: sargatanas-iid
 local-hostname: sargatanas-vm
 """
 

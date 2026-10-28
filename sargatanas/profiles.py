@@ -58,7 +58,7 @@ class Profile:
             return [
                 "Requires a cloud image with cloud-init (see: sargatanas images)",
                 "TCP traffic is redirected into Tor inside the guest",
-                "Needs Tor running with TransPort enabled on the host",
+                "Needs the host Tor SOCKS port reachable (9050 by default)",
             ]
         if self.key == "stealth":
             return [
@@ -92,8 +92,8 @@ class Profile:
                      "No host access, no internet"]
         elif net == "tor":
             rules = ["No inbound ports",
-                     "guestfwd exposes Tor TransPort/SOCKS/DNS at 10.0.2.100",
-                     "cloud-init redirects all guest TCP into TransPort"]
+                     "guestfwd exposes Tor SOCKS at 10.0.2.100:9050",
+                     "cloud-init installs redsocks and redirects all TCP into it"]
         elif net == "vpn":
             rules = ["NAT egress follows the host VPN",
                      "Requires the VPN interface up (verified at launch)"]
@@ -193,15 +193,6 @@ def tor_installed() -> bool:
     return shutil.which("tor") is not None
 
 
-def _tor_trans_port_reachable(port: int = 9040) -> bool:
-    """TransPort is what iptables REDIRECT feeds; SOCKS alone is not enough."""
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=1.0):
-            return True
-    except OSError:
-        return False
-
-
 def vpn_interface_up(interface: str | None) -> bool:
     """Check for an up tunnel interface, per platform."""
     if not interface:
@@ -236,11 +227,6 @@ def check_launch(profile: Profile, *, socks_port: int = 9050,
             check.ok = False
             check.reasons.append(
                 f"Tor SOCKS listener not reachable on 127.0.0.1:{socks_port}{hint}")
-        elif not _tor_trans_port_reachable():
-            check.ok = False
-            check.reasons.append(
-                "Tor TransPort (9040) is not reachable; enable TransPort in torrc "
-                "(sargatanas tor config --output torrc)")
         if not shutil.which("nc"):
             check.ok = False
             check.reasons.append(
@@ -278,31 +264,21 @@ def _internal_netdev(net_id: str) -> list[str]:
 TOR_ENDPOINT = "10.0.2.100"
 
 
-def tor_guestfwd_args(socks_port: int = 9050, trans_port: int = 9040,
-                      dns_port: int = 9053) -> list[str]:
-    """Expose the host's Tor ports inside the guest, without root.
+def tor_guestfwd_args(socks_port: int = 9050) -> list[str]:
+    """Expose the host's Tor SOCKS port inside the guest, without root.
 
     QEMU's user networking has no outbound-proxy option, so we push the
     opposite direction: `guestfwd` splices a guest TCP port to a host
-    process. With cloud-init applying iptables REDIRECT rules to these ports
-    the guest's traffic ends up in Tor.
+    process. The guest's redsocks then forwards every redirected connection
+    to this SOCKS endpoint.
     """
-    forwards = [
-        (9050, socks_port),   # SOCKS, for apps that speak it
-        (9040, trans_port),   # TransPort, target of the NAT redirect
-        (9053, dns_port),     # DNSPort, target of the DNS redirect
-    ]
-    opts = ",".join(
-        f"guestfwd=tcp:{TOR_ENDPOINT}:{guest}-cmd:nc 127.0.0.1 {host}"
-        for guest, host in forwards
-    )
-    return ["-netdev", f"user,id=net0,{opts}",
+    cmd = f"guestfwd=tcp:{TOR_ENDPOINT}:9050-cmd:nc 127.0.0.1 {socks_port}"
+    return ["-netdev", f"user,id=net0,{cmd}",
             "-device", "virtio-net-pci,netdev=net0"]
 
 
 def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
-                      socks_port: int = 9050,
-                      trans_port: int = 9040, dns_port: int = 9053) -> list[str]:
+                      socks_port: int = 9050, **_ignored: object) -> list[str]:
     """Translate a profile into QEMU networking arguments.
 
     For `tor`/`stealth` the guest gets no inbound ports and the Tor endpoints
@@ -319,7 +295,7 @@ def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
     if net == "internal":
         return _internal_netdev("net0")
     if net == "tor":
-        return tor_guestfwd_args(socks_port, trans_port, dns_port)
+        return tor_guestfwd_args(socks_port)
     if net == "vpn":
         return _user_netdev("net0", forwards)
     if net == "pentesting":

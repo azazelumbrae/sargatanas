@@ -211,15 +211,13 @@ class TestProfiles(unittest.TestCase):
             check = profiles.check_launch(profiles.get("stealth"), vpn_interface="wg0")
         self.assertFalse(check.ok)
 
-    def test_tor_exposes_endpoints_via_guestfwd(self):
-        # QEMU has no proxy option, so Tor is spliced into the guest instead:
-        # TransPort 9040, SOCKS 9050 and DNSPort 9053, reachable at 10.0.2.100.
-        args = self.net("tor", socks_port=9050, trans_port=9040, dns_port=9053)
+    def test_tor_exposes_socks_via_guestfwd(self):
+        # QEMU has no proxy option, so the host SOCKS port is spliced into the
+        # guest at 10.0.2.100:9050; redsocks in the guest consumes it.
+        args = self.net("tor", socks_port=9050)
         netdev = args[1]
-        self.assertIn("guestfwd=tcp:10.0.2.100:9040", netdev)
         self.assertIn("guestfwd=tcp:10.0.2.100:9050", netdev)
-        self.assertIn("guestfwd=tcp:10.0.2.100:9053", netdev)
-        self.assertIn("127.0.0.1 9040", netdev)
+        self.assertIn("nc 127.0.0.1 9050", netdev)
         self.assertNotIn("hostfwd", netdev)
 
     def test_vpn_uses_nat_networking(self):
@@ -237,26 +235,17 @@ class TestProfiles(unittest.TestCase):
         self.assertFalse(check.ok)
         self.assertIn("SOCKS", check.reasons[0])
 
-    def test_tor_profile_allows_when_socks_and_trans_port_up(self):
+    def test_tor_profile_allows_when_socks_up_and_nc_present(self):
         with mock.patch.object(profiles, "tor_socks_reachable", return_value=True), \
-             mock.patch.object(profiles, "_tor_trans_port_reachable", return_value=True), \
              mock.patch.object(profiles.shutil, "which", return_value="/usr/bin/nc"):
             self.assertTrue(profiles.check_launch(profiles.get("tor")).ok)
 
-    def test_tor_profile_blocks_without_trans_port(self):
-        with mock.patch.object(profiles, "tor_socks_reachable", return_value=True), \
-             mock.patch.object(profiles, "_tor_trans_port_reachable", return_value=False), \
-             mock.patch.object(profiles.shutil, "which", return_value="/usr/bin/nc"):
-            check = profiles.check_launch(profiles.get("tor"))
-        self.assertFalse(check.ok)
-        self.assertIn("TransPort", check.reasons[0])
-
     def test_tor_profile_blocks_without_netcat(self):
         with mock.patch.object(profiles, "tor_socks_reachable", return_value=True), \
-             mock.patch.object(profiles, "_tor_trans_port_reachable", return_value=True), \
              mock.patch.object(profiles.shutil, "which", return_value=None):
             check = profiles.check_launch(profiles.get("tor"))
         self.assertFalse(check.ok)
+        self.assertTrue(any("Netcat" in r for r in check.reasons))
 
     def test_vpn_profile_blocks_without_interface(self):
         with mock.patch.object(profiles, "vpn_interface_up", return_value=False):
@@ -423,8 +412,11 @@ class TestCloud(TempHome):
         from sargatanas import cloud
         yaml = cloud.user_data_tor()
         self.assertIn("#cloud-config", yaml)
-        self.assertIn("REDIRECT --to-ports 9040", yaml)
+        self.assertIn("REDIRECT --to-ports", yaml)
+        self.assertIn("REDSOCKS=12345", yaml)
         self.assertIn("10.0.2.100", yaml)
+        self.assertIn("redsocks", yaml)
+        self.assertIn("type = socks5", yaml)
         self.assertIn("/usr/local/bin/sargatanas-tor", yaml)
 
     def test_cloud_init_detection(self):
