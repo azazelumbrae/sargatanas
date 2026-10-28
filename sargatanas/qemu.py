@@ -152,6 +152,7 @@ class QemuSpec:
     read_only: bool = False      # live mode: changes are discarded
     display: str | None = None
     extra_args: list[str] | None = None
+    firmware_vars: Path | None = None   # NVRAM copy for aarch64 UEFI
 
 
 def build_disk_args(spec: QemuSpec) -> list[str]:
@@ -188,6 +189,33 @@ def video_args() -> list[str]:
     return ["-vga", "virtio", "-usb", "-device", "usb-tablet"]
 
 
+def uefi_args(spec: QemuSpec) -> list[str]:
+    """Attach EDK2 firmware on aarch64, where ISO/disk images need UEFI.
+
+    Without it QEMU boots an empty machine and the guest prints nothing.
+    Vars are written to a private copy so one VM cannot corrupt another's
+    NVRAM. If the firmware is missing we degrade silently: x86 guests are
+    unaffected and the failure is obvious at boot time.
+    """
+    if host_arch() != "aarch64":
+        return []
+    share = Path(shutil.which("qemu-system-aarch64") or "").resolve().parent.parent / "share" / "qemu"
+    code = share / "edk2-aarch64-code.fd"
+    if not code.exists():
+        return []
+    vars_template = share / "edk2-arm-vars.fd"
+    vars_path = spec.firmware_vars
+    if vars_path is None:
+        return ["-bios", str(code)]
+    if not vars_path.exists() and vars_template.exists():
+        vars_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(vars_template, vars_path)
+    args = ["-drive", f"if=pflash,format=raw,readonly=on,file={code}"]
+    if vars_path.exists():
+        args += ["-drive", f"if=pflash,format=raw,file={vars_path}"]
+    return args
+
+
 def build_argv(spec: QemuSpec, qemu: str | None = None) -> list[str]:
     """Build the QEMU argv for a spec.
 
@@ -197,6 +225,7 @@ def build_argv(spec: QemuSpec, qemu: str | None = None) -> list[str]:
     """
     argv = [qemu or find_qemu(), "-name", f"sargatanas-{spec.name}"]
     argv += machine_args()
+    argv += uefi_args(spec)
     argv += ["-m", str(spec.ram_mb), "-smp", str(spec.cpus)]
 
     args = accelerator()
@@ -233,8 +262,21 @@ def default_display() -> str:
 
 # ---------- process management ----------
 
-def spawn(argv: list[str]) -> subprocess.Popen:
-    """Start QEMU detached from the terminal's session/console."""
+def spawn(argv: list[str], attach: bool = False) -> subprocess.Popen:
+    """Start QEMU.
+
+    `attach=True` wires the guest's serial console to the caller's terminal
+    (used by `--headless`); otherwise QEMU is detached with no output, which
+    is what a GUI/daemon launch wants.
+    """
+    if attach:
+        try:
+            proc = subprocess.Popen(argv)
+            proc.wait()
+            return proc
+        except FileNotFoundError as exc:
+            raise QemuError(f"Could not execute {argv[0]}: {exc}") from exc
+
     kwargs: dict = dict(stdin=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if platform.system() == "Windows":

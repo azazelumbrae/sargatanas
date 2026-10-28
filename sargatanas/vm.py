@@ -186,12 +186,19 @@ def start(name: str, *, live: bool = False, install: bool = False,
         boot=boot,
         headless=headless,
         read_only=live,
+        firmware_vars=Path(vm.disk).parent / "efi-vars.fd",
     )
     argv = qemu.build_argv(spec) + profiles.qemu_network_args(
         prof,
         forwards=cfg.network.forwards,
         socks_port=cfg.tor.socks_port,
     ) + extra
+
+    if headless:
+        # The guest's serial console owns the terminal until it exits.
+        proc = qemu.spawn(argv, attach=True)
+        _clear_pid(name)
+        return proc.pid
 
     proc = qemu.spawn(argv)
     _write_pid(name, proc.pid)
