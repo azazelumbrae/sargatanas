@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -54,6 +55,13 @@ def check_tk() -> None:
         sys.exit("[-] _tkinter is built into this interpreter, so PyInstaller cannot "
                  "bundle it. Use the python.org build.")
     print(f"[+] Tk {tkinter.TkVersion} from {origin}")
+
+
+def project_version() -> str:
+    """Read the version from pyproject so it is defined in exactly one place."""
+    pyproject = (ROOT / "pyproject.toml").read_text()
+    match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.MULTILINE)
+    return match.group(1) if match else "0.0.0"
 
 
 def build() -> None:
@@ -99,6 +107,7 @@ def build() -> None:
 
 def _make_macos_app() -> None:
     """Wrap the console binary in a .app so it can be double-clicked."""
+    version = project_version()
     app = DIST / "Sargatanas.app"
     if app.exists():
         shutil.rmtree(app)
@@ -108,15 +117,15 @@ def _make_macos_app() -> None:
     res.mkdir(parents=True)
     shutil.copy2(DIST / "sargatanas", macos / "Sargatanas")
     shutil.copy2(ICONS / "sargatanas.png", res / "sargatanas.png")
-    (app / "Contents" / "Info.plist").write_text("""<?xml version="1.0" encoding="UTF-8"?>
+    (app / "Contents" / "Info.plist").write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key><string>Sargatanas</string>
   <key>CFBundleDisplayName</key><string>Sargatanas</string>
   <key>CFBundleIdentifier</key><string>com.sargatanas.app</string>
-  <key>CFBundleVersion</key><string>0.1.0</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>{version}</string>
+  <key>CFBundleShortVersionString</key><string>{version}</string>
   <key>CFBundleExecutable</key><string>Sargatanas</string>
   <key>CFBundleIconFile</key><string>sargatanas.png</string>
   <key>NSHighResolutionCapable</key><true/>
