@@ -6,7 +6,7 @@
 
 **Virtual machine manager for maximum anonymity**
 
-Privacy is a bless granted by design, do not let other decided your destiny.
+Privacy is a bless granted by design, do not let others decide your destiny.
 
 <br>
 
