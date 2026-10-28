@@ -33,17 +33,21 @@ Privacy is a bless granted by design, do not let others decide your destiny.
 
 ## 📌 What it is
 
-**Sargatanas** is a thin layer over **QEMU** for managing virtual machines from
-a single terminal or a graphical interface.
+**Sargatanas** turns QEMU into a fortress. Not another VM launcher — a machine
+built to disappear, run from a single terminal or from a graphical interface.
 
-The core idea: instead of "just booting a VM", you pick a **security tier** and
-Sargatanas configures networking accordingly. Tiers that depend on external
-services (Tor, VPN) are **checked before launch**: if the service is not
-available, the VM does not start and tells you why — rather than starting
-without the protection you thought you had.
+Every machine is born inside a **security tier**, and that tier decides, before
+the first byte boots, exactly what the machine can see, touch and leak. Pick
+`isolated` and it has no network device at all — no address, no route, no
+signal. Pick Tor or VPN and Sargatanas **refuses to start** if the tunnel is
+down or the SOCKS listener is dead — because an anonymity layer that fails open
+is not anonymity, it is a lie. Sargatanas fails closed.
 
-All state lives in one directory (`~/Sargatanas`), in a versioned, readable
-JSON file.
+No telemetry. No cloud. No account. Just you, an isolated machine, and a state
+that lives entirely on your disk in one versioned file you can read.
+
+> *"We remain unseen by those who seek our downfall; the air sustains us and the
+> shadows clothe us, until the blow is struck."*
 
 ---
 
