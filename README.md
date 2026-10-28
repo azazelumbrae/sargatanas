@@ -11,7 +11,7 @@ Privacy is a bless granted by design, do not let others decide your destiny.
 <br>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/azazelumbrae/sargantanas/ci.yml?branch=main&style=flat-square&label=CI&logo=github)](https://github.com/azazelumbrae/sargantanas/actions)
-[![Version](https://img.shields.io/badge/version-0.1.1-c9a227?style=flat-square)](https://github.com/azazelumbrae/sargantanas/releases)
+[![Version](https://img.shields.io/badge/version-0.2.0-c9a227?style=flat-square)](https://github.com/azazelumbrae/sargantanas/releases)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![QEMU](https://img.shields.io/badge/qemu-6.0%2B-ff6600?style=flat-square)](https://www.qemu.org/)
 [![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-2ea043?style=flat-square)](#-platforms)
@@ -236,10 +236,10 @@ Grab a standalone binary - no Python required.
 
 | Platform | File | Notes |
 |---|---|---|
-| 🍎 **macOS** (Apple Silicon) | `Sargatanas-v0.1.1-macos.app.zip` | Unzip, drag to Applications |
-| 🍎 **macOS** (CLI) | `sargatanas-v0.1.1-macos-arm64` | `chmod +x` and run |
-| 🐧 **Linux** x86_64 | `sargatanas-v0.1.1-linux-x86_64` | `chmod +x` and run |
-| 🪟 **Windows** x86_64 | `sargatanas-v0.1.1-windows-x86_64.exe` | Double-click |
+| 🍎 **macOS** (Apple Silicon) | `Sargatanas-v0.2.0-macos.app.zip` | Unzip, drag to Applications |
+| 🍎 **macOS** (CLI) | `sargatanas-v0.2.0-macos-arm64` | `chmod +x` and run |
+| 🐧 **Linux** x86_64 | `sargatanas-v0.2.0-linux-x86_64` | `chmod +x` and run |
+| 🪟 **Windows** x86_64 | `sargatanas-v0.2.0-windows-x86_64.exe` | Double-click |
 
 [**→ Latest release**](https://github.com/azazelumbrae/sargantanas/releases/latest)
 
@@ -415,11 +415,12 @@ control protocol and process management. They run on Linux, macOS and Windows.
 
 | Area | Status |
 |---|---|
-| **Tor routing in-guest** | ✅ Booted a real Alpine VM; exit node confirmed (`{"IsTor":true}`) |
+| **Tor routing in-guest** | ✅ Real VM: TCP and DNS through Tor (`116.202.120.181`) |
 | **CLI** | ✅ macOS + CI green on Linux and Windows |
 | **GUI** | ✅ Opened from source and from the packaged binary |
 | **Binaries** | ✅ Built for Linux, macOS and Windows by CI |
 | **Security tiers** | ✅ Argument construction covered by tests |
+| **Tor + HTTPS via torsocks** | ⚠️ HTTP works; TLS through the relay is unstable |
 | **VPN kill switch** | ⚠️ Linux-only code, never executed end to end |
 | **UDP over Tor** | ❌ Not supported (redsocks redirects TCP only) |
 | **Windows / Linux GUI** | ⚠️ Core is tested in CI; windows not opened there |
