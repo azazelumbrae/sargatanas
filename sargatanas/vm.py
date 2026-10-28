@@ -128,6 +128,7 @@ def create(name: str, *, iso: str | None = None, ram: int | None = None,
                 raise VmError("Cannot build the cloud-init seed on this host "
                               "(need hdiutil or genisoimage/xorriso)")
             cloud.write_seed(cloud.seed_path(disk), cloud.user_data_tor())
+            cloud.write_seed_stamp(disk)
     except Exception:
         shutil.rmtree(vm_path, ignore_errors=True)
         raise
@@ -337,6 +338,16 @@ def set_profile(name: str, profile: str, cfg: config.Config | None = None) -> No
     profiles.get(profile)
     cfg.vms[name].profile = profile
     config.save(cfg)
+
+
+def stale_seed(name: str, cfg: config.Config | None = None) -> bool:
+    """True when a Tor-seeded VM predates the current cloud-init payload."""
+    cfg = cfg or config.load()
+    if name not in cfg.vms:
+        return False
+    from . import cloud
+    disk = Path(cfg.vms[name].disk)
+    return cloud.seed_path(disk).exists() and not cloud.seed_is_current(disk)
 
 
 def launch_state(name: str, profile: str | None = None,

@@ -193,12 +193,24 @@ def cmd_create(args: argparse.Namespace) -> int:
                         disk_gb=args.disk, profile=args.profile,
                         image=args.image, cloud=args.cloud)
     print(color(f"[+] VM '{created.name}' created ({args.disk or 'default'} GB disk)", GREEN))
+    if vm.stale_seed(created.name) is False and args.cloud:
+        from . import cloud
+        print(color(f"    Guest login: root / {cloud.guest_login()}", CYAN))
     return 0
 
 
 def cmd_run(args: argparse.Namespace) -> int:
     if not require_qemu():
         return 1
+    if vm.stale_seed(args.name):
+        from . import cloud
+        print(color(f"[!] '{args.name}' was seeded by an older version of Sargatanas.", YELLOW))
+        print(color(f"    cloud-init only runs once, so the guest login may not work.", DIM))
+        print(color(f"    Recreate it: sargatanas delete {args.name} -y && "
+                    f"sargatanas create {args.name} --cloud alpine", DIM))
+        print(color(f"    Login it sets: root / {cloud.guest_login()}", DIM))
+        print()
+
     pid = vm.start(args.name, live=args.live, install=args.install,
                      headless=args.headless, profile=args.profile)
     mode = "live" if args.live else ("install" if args.install else "disk")

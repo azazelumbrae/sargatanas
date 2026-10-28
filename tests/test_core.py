@@ -377,6 +377,35 @@ class TestVm(TempHome):
         self.assertNotIn("-sandbox", argv)
 
 
+class TestSeedVersion(TempHome):
+    def test_guest_login_is_the_documented_one(self):
+        from sargatanas import cloud
+        self.assertIn(f"root / {cloud.guest_login()}", "root / sargatanas")
+
+    def test_seed_without_stamp_is_stale(self):
+        from sargatanas import cloud
+        disk = Path(self.tmp.name) / "vm" / "d.qcow2"
+        disk.parent.mkdir(parents=True)
+        cloud.seed_path(disk).write_bytes(b"iso")
+        self.assertFalse(cloud.seed_is_current(disk))
+
+    def test_stamp_marks_current(self):
+        from sargatanas import cloud
+        disk = Path(self.tmp.name) / "vm" / "d.qcow2"
+        disk.parent.mkdir(parents=True)
+        cloud.seed_path(disk).write_bytes(b"iso")
+        cloud.write_seed_stamp(disk)
+        self.assertTrue(cloud.seed_is_current(disk))
+
+    def test_vm_reports_stale_seed(self):
+        with mock.patch("sargatanas.qemu.create_disk"):
+            vm.create("oldvm", profile="nat")
+        from sargatanas import cloud
+        disk = paths.vm_dir() / "oldvm" / "oldvm.qcow2"
+        cloud.seed_path(disk).write_bytes(b"iso")
+        self.assertTrue(vm.stale_seed("oldvm"))
+
+
 class TestBootRepair(TempHome):
     def test_repair_resets_nvram(self):
         with mock.patch("sargatanas.qemu.create_disk"):

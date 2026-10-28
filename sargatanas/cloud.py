@@ -222,6 +222,10 @@ runcmd:
   - ["/usr/local/bin/sargatanas-tor"]
 """
 
+# Bumped whenever the generated payload changes in a way that matters to an
+# already-initialised guest (credentials, routing).
+SEED_VERSION = 2
+
 META_DATA = f"""instance-id: sargatanas-iid
 local-hostname: sargatanas-vm
 """
@@ -281,6 +285,33 @@ def write_seed(dest: Path, user_data: str) -> Path:
 
 def seed_path(disk: Path) -> Path:
     return disk.parent / "seed.iso"
+
+
+def seed_stamp_path(disk: Path) -> Path:
+    """Marker holding the SEED_VERSION the guest was seeded with."""
+    return disk.parent / "seed.version"
+
+
+def write_seed_stamp(disk: Path) -> None:
+    seed_stamp_path(disk).write_text(str(SEED_VERSION) + "\n")
+
+
+def guest_login() -> str:
+    """The root password the seed configures (documented in the README)."""
+    return "sargatanas"
+
+
+def seed_is_current(disk: Path) -> bool:
+    """False when the VM was created with an older user-data payload.
+
+    cloud-init runs once per instance, so rewriting seed.iso does not fix an
+    existing guest: the VM has to be recreated.
+    """
+    stamp = seed_stamp_path(disk)
+    try:
+        return int(stamp.read_text().strip()) >= SEED_VERSION
+    except (OSError, ValueError):
+        return False
 
 
 def has_cloud_init(image: Path) -> bool:
