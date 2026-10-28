@@ -171,6 +171,9 @@ if [ ! -f "$PHASE1" ]; then
     command -v ip6tables >/dev/null 2>&1 || install_pkg ip6tables ip6tables-legacy || true
     # torsocks is the piece that makes ordinary programs honour Tor.
     command -v torsocks >/dev/null 2>&1 || install_pkg torsocks || true
+    # strace for diagnosing routing problems; users can rerun the diagnose
+    # command without needing a working network.
+    command -v strace >/dev/null 2>&1 || install_pkg strace || true
     touch "$PHASE1"
     echo "sargatanas: phase 1 done"
 fi
