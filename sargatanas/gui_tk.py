@@ -100,7 +100,21 @@ class App(tk.Tk):
         style.map("Accent.TButton", background=[("active", "#e8c65a")])
         style.configure("Danger.TButton", background="#5b1a24", foreground=TEXT)
         style.configure("TEntry", fieldbackground=FIELD, foreground=TEXT, insertcolor=TEXT)
-        style.configure("TCombobox", fieldbackground=FIELD, foreground=TEXT, background=FIELD)
+        style.configure("TCombobox", fieldbackground=FIELD, foreground=TEXT, background=FIELD,
+                        arrowcolor=ACCENT, selectbackground=FIELD, selectforeground=TEXT)
+        # The dropdown list is a native Tk listbox, themed separately. Without
+        # this the entry turns white with white text when focused/selected.
+        style.map("TCombobox",
+                  fieldbackground=[("readonly", FIELD), ("focus", FIELD), ("!disabled", FIELD)],
+                  foreground=[("readonly", TEXT), ("focus", TEXT), ("!disabled", TEXT)],
+                  selectbackground=[("readonly", FIELD), ("focus", ACCENT)],
+                  selectforeground=[("readonly", TEXT), ("focus", BG)],
+                  background=[("readonly", FIELD), ("active", "#3a4060"), ("!disabled", FIELD)])
+        self.option_add("*TCombobox*Listbox.background", CARD)
+        self.option_add("*TCombobox*Listbox.foreground", TEXT)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self.option_add("*TCombobox*Listbox.selectForeground", BG)
+        self.option_add("*TCombobox*Listbox.font", ("", 11))
         style.configure("TCheckbutton", background=BG, foreground=TEXT)
         style.configure("TLabelframe", background=BG, foreground=ACCENT)
         style.configure("TLabelframe.Label", background=BG, foreground=ACCENT)
