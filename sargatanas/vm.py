@@ -139,9 +139,10 @@ def status(cfg: config.Config | None = None) -> list[VmStatus]:
     cfg = cfg or config.load()
     out = []
     for name, vm in cfg.vms.items():
+        running = is_running(name)
         out.append(VmStatus(
-            name=name, running=is_running(name),
-            pid=_read_pid(name) if is_running(name) else None,
+            name=name, running=running,
+            pid=_read_pid(name) if running else None,
             ram=vm.ram, cpus=vm.cpus,
             profile=vm.profile or cfg.default_profile,
             disk=Path(vm.disk),
@@ -169,9 +170,10 @@ def start(name: str, *, live: bool = False, install: bool = False,
         raise VmError("Refusing to start: " + "; ".join(check.reasons))
 
     iso = Path(vm.iso) if vm.iso else None
+    boot = "d" if (live or install) else "c"
     extra = list(prof.extra_qemu_args)
-    if prof.key == "vpn" and cfg.vpn.kill_switch:
-        extra += kill_switch_args(cfg.vpn.interface)
+    if qemu.sandbox_supported():
+        extra += ["-sandbox", "on"]
 
     # Start with the profile's guest networking only. build_argv() does not
     # add a NIC, so there is nothing to strip.
@@ -181,7 +183,7 @@ def start(name: str, *, live: bool = False, install: bool = False,
         ram_mb=vm.ram,
         cpus=vm.cpus,
         iso=iso if (live or install) else None,
-        boot="d",
+        boot=boot,
         headless=headless,
         read_only=live,
     )
@@ -201,11 +203,14 @@ def start(name: str, *, live: bool = False, install: bool = False,
 
 
 def kill_switch_args(interface: str | None) -> list[str]:
-    """QEMU supports blocking guest traffic when a network goes down."""
-    if not interface:
-        return []
-    return ["-netdev", f"user,id=killswitch0,restrict=yes",
-            "-device", "virtio-net-pci,netdev=killswitch0"]
+    """Removed: a real kill switch needs host firewall rules, not a QEMU NIC.
+
+    Kept as a no-op shim so any existing caller that references it still
+    imports cleanly, but it returns nothing. See profiles.check_launch for
+    the honest "not implemented" warning.
+    """
+    del interface
+    return []
 
 
 def stop(name: str, force: bool = False) -> bool:

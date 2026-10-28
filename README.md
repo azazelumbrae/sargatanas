@@ -24,7 +24,7 @@ launch fails with a reason.
 ## Features
 
 - **Create / run / stop / delete** QEMU VMs from one command line and one
-  600-permission JSON config.
+  JSON config (0600 on Unix, NTFS ACLs on Windows).
 - **Hardware acceleration** detected per host: KVM on Linux, HVF on macOS,
   WHPX on Windows, with the right CPU model for each.
 - **ISO discovery** and **quick boot**: run an ISO with no disk at all, so
@@ -34,8 +34,12 @@ launch fails with a reason.
 - **Snapshots** of a stopped VM's disk (`qemu-img`).
 - **Safety by construction**: arguments are built as a list, never a shell
   string, so a VM named `x; rm -rf ~` is just a badly named VM.
-- **Stale PID detection**: a crashed VM does not show as running after reboot.
-- **Optional GTK interface** that reuses the exact same core.
+- **Stale PID detection** via `psutil`: a crashed VM does not show as running
+  after reboot, and a reused PID is never killed by mistake.
+- **Cross-platform GUI** (Tkinter, ships with Python) plus an optional GTK
+  interface, both reusing the exact same core.
+- **QEMU seccomp sandbox** (`-sandbox on`) applied automatically where the
+  build supports it (Linux), never claimed elsewhere.
 - **One-time migration** from the old `~/n01d-machine` config.
 
 ## Security profiles
@@ -45,24 +49,25 @@ launch fails with a reason.
 | `isolated` | No network device in the guest | Yes, always |
 | `nat` | QEMU user networking, with `2222:22` forwarded by default | Yes, always |
 | `host-only` | User networking with `restrict=yes`: internet out, no host/LAN access | Yes, always |
-| `tor` | Outbound TCP proxied through a Tor SOCKS listener | Only if Tor is reachable, else **refuses to start** |
-| `vpn` | Boots only if the VPN interface is up | Only if the interface is up, else **refuses to start** |
+| `tor` | Verifies a Tor SOCKS listener is up, then boots with no inbound ports | Only if Tor is reachable, else **refuses to start** |
+| `vpn` | Verifies the VPN interface is up before booting | Only if the interface is up, else **refuses to start** |
 
 **What the profiles do not do.** These are stated here rather than discovered
 later:
 
-- `tor` proxies TCP only. UDP and DNS are not handled, and it is not the
-  Whonix/Tails model of a transparent gateway. Sensitive work should use a
-  dedicated gateway VM.
-- On macOS and Windows the `vpn` profile checks the interface and nothing
-  else. The kill switch that blocks traffic when a tunnel drops is a Linux
-  `iptables` concern and is not implemented yet.
+- `tor` does **not** transparently route guest traffic through Tor - that
+  requires a dedicated gateway (Whonix/Tails). It only verifies Tor is
+  reachable and boots with outbound-only networking; you must point the
+  guest's own applications at the host Tor proxy.
+- `vpn` does not install a **kill switch**. If the tunnel drops, guest traffic
+  is not blocked. This is not implemented yet.
 - `host-only` blocks the *host and LAN*, not the internet.
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.9+ (the GUI uses Tkinter, which ships with CPython)
 - QEMU (`qemu-system-x86_64` or `qemu-system-aarch64`) and `qemu-img`
+- `psutil` (installed automatically as a dependency)
 
 ```bash
 # macOS
@@ -75,11 +80,12 @@ sudo apt install qemu-system-x86 qemu-utils
 sudo dnf install qemu-system-x86 qemu-img
 
 # Windows
-choco install qemu
+choco install qemu        # then add C:\Program Files\qemu to PATH, or
+                          # Sargatanas will find it there automatically
 ```
 
 Optional: Tor (`brew install tor` / `apt install tor`) for the `tor` profile;
-PyGObject + GTK3 for the graphical interface.
+PyGObject + GTK3 only if you want the GTK interface instead of Tkinter.
 
 ## Install
 
@@ -87,7 +93,7 @@ PyGObject + GTK3 for the graphical interface.
 git clone https://github.com/alvarosp1/sargatanas
 cd sargatanas
 pip install .            # or: pipx install .
-# GUI extras:  pip install '.[gui]'
+# GTK interface instead of Tkinter:  pip install '.[gtk]'
 ```
 
 Run without installing:
@@ -109,7 +115,8 @@ sargatanas list
 sargatanas stop lab
 sargatanas delete lab
 sargatanas profiles                   # what each profile really enforces
-sargatanas gui                        # GTK interface
+sargatanas gui                        # Tkinter GUI (works everywhere)
+sargatanas gui --gtk                  # GTK interface (Linux/macOS)
 ```
 
 Overrides:
@@ -126,7 +133,7 @@ Everything lives under one directory: `~/Sargatanas` (change it with
 
 ```
 ~/Sargatanas/
-├── config.json      # 0600, schema-versioned
+├── config.json      # schema-versioned; 0600 on Unix, NTFS ACLs on Windows
 ├── vms/<name>/      # disk + pid
 ├── isos/            # ISOs found first
 └── logs/
@@ -137,15 +144,19 @@ Extra ISO folders: `SARGATANAS_ISOS=~/img:~/Downloads/linux`.
 ## Development
 
 ```bash
-python -m unittest discover -s tests -t . -v
+python dev.py test                  # or: python -m unittest discover -s tests -t .
+python dev.py dist                  # sdist + wheel
+python dev.py icons                 # render icons from the SVG
 ```
 
-The suite needs no QEMU: argument construction is a pure function and process
-and Tor interactions are mocked. CI runs it on Linux, macOS and Windows.
+The suite needs no QEMU: argument construction is a pure function, and the
+process (psutil) and Tor interactions are mocked. CI runs it on Linux, macOS
+and Windows.
 
 ## Status
 
-Early (0.1.0). The core is tested; the GUI is smoke-tested only on Linux.
+Early (0.1.0). The core and the process/argv layer are tested; the GUIs are
+smoke-tested only.
 
 ## Credits
 

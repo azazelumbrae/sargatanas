@@ -53,6 +53,8 @@ class TestConfig(TempHome):
 
     def test_config_is_private(self):
         config.save(config.Config())
+        if os.name == "nt":
+            self.skipTest("0600 is a Unix concept; Windows uses NTFS ACLs")
         mode = paths.config_file().stat().st_mode & 0o777
         self.assertEqual(mode, 0o600)
 
@@ -146,6 +148,23 @@ class TestQemuArgv(unittest.TestCase):
         self.assertNotIn("-machine", argv)
         self.assertEqual(argv[argv.index("-vga") + 1], "virtio")
 
+    def test_windows_finds_qemu_outside_path(self):
+        # QEMU on Windows installs to Program Files, not PATH.
+        with mock.patch.object(qemu, "host_arch", return_value="x86_64"), \
+             mock.patch.object(qemu.platform, "system", return_value="Windows"), \
+             mock.patch.object(qemu.shutil, "which", return_value=None), \
+             mock.patch.object(qemu, "_windows_qemu_binaries", return_value={
+                 "qemu-system-x86_64.exe": r"C:\Program Files\qemu\qemu-system-x86_64.exe"}):
+            self.assertEqual(qemu.find_qemu(),
+                             r"C:\Program Files\qemu\qemu-system-x86_64.exe")
+
+    def test_windows_finds_qemu_img_outside_path(self):
+        with mock.patch.object(qemu.platform, "system", return_value="Windows"), \
+             mock.patch.object(qemu.shutil, "which", return_value=None), \
+             mock.patch.object(qemu, "_windows_qemu_binaries", return_value={
+                 "qemu-img.exe": r"C:\Program Files\qemu\qemu-img.exe"}):
+            self.assertEqual(qemu.find_qemu_img(), r"C:\Program Files\qemu\qemu-img.exe")
+
 
 class TestProfiles(unittest.TestCase):
     def net(self, key: str, **kw) -> list[str]:
@@ -163,9 +182,17 @@ class TestProfiles(unittest.TestCase):
         self.assertIn("restrict=yes", args[1])
         self.assertNotIn("hostfwd", args[1])
 
-    def test_tor_uses_socks(self):
+    def test_tor_has_no_hostfwd_and_no_socks(self):
+        # The invalid `socks=` option was removed; tor is a guard that boots
+        # with outbound-only user networking (no inbound ports).
         args = self.net("tor", socks_port=9050)
-        self.assertIn("socks=127.0.0.1:9050", " ".join(args))
+        self.assertEqual(args[1], "user,id=net0")
+        self.assertNotIn("hostfwd", " ".join(args))
+        self.assertNotIn("socks=", " ".join(args))
+
+    def test_vpn_uses_nat_networking(self):
+        args = self.net("vpn", forwards=["2222:22"])
+        self.assertIn("hostfwd=tcp::2222-:22", args[1])
 
     def test_unknown_profile_raises(self):
         with self.assertRaises(KeyError):
@@ -186,6 +213,12 @@ class TestProfiles(unittest.TestCase):
         with mock.patch.object(profiles, "vpn_interface_up", return_value=False):
             self.assertFalse(profiles.check_launch(profiles.get("vpn"),
                                                     vpn_interface="wg0").ok)
+
+    def test_vpn_warns_kill_switch_not_implemented(self):
+        with mock.patch.object(profiles, "vpn_interface_up", return_value=True):
+            check = profiles.check_launch(profiles.get("vpn"), vpn_interface="wg0")
+        self.assertTrue(check.ok)
+        self.assertTrue(any("Kill switch" in w for w in check.warnings))
 
     def test_every_profile_has_limits_documented_or_is_plain(self):
         # Guards against a future profile claiming magic with no caveat.
@@ -249,6 +282,72 @@ class TestVm(TempHome):
         argv = spawn.call_args[0][0]
         self.assertNotIn("-netdev", argv)
         self.assertNotIn("-net", argv)
+
+    def test_sandbox_added_when_supported(self):
+        with mock.patch("sargatanas.qemu.create_disk"):
+            vm.create("s", profile="isolated")
+        with mock.patch.object(qemu, "sandbox_supported", return_value=True), \
+             mock.patch("sargatanas.qemu.spawn") as spawn:
+            spawn.return_value = mock.Mock(pid=4242)
+            vm.start("s")
+        argv = spawn.call_args[0][0]
+        self.assertIn("-sandbox", argv)
+        self.assertEqual(argv[argv.index("-sandbox") + 1], "on")
+
+    def test_sandbox_omitted_when_unsupported(self):
+        with mock.patch("sargatanas.qemu.create_disk"):
+            vm.create("s2", profile="isolated")
+        with mock.patch.object(qemu, "sandbox_supported", return_value=False), \
+             mock.patch("sargatanas.qemu.spawn") as spawn:
+            spawn.return_value = mock.Mock(pid=4242)
+            vm.start("s2")
+        argv = spawn.call_args[0][0]
+        self.assertNotIn("-sandbox", argv)
+
+
+class TestProcess(unittest.TestCase):
+    """psutil-backed process checks, with psutil itself mocked out."""
+
+    def _proc(self, name="qemu-system-x86_64", status=None):
+        proc = mock.Mock()
+        proc.name.return_value = name
+        proc.status.return_value = status if status is not None else qemu.psutil.STATUS_RUNNING
+        return proc
+
+    def test_is_running_true_with_name(self):
+        with mock.patch.object(qemu.psutil, "Process", return_value=self._proc()):
+            self.assertEqual(qemu.is_running(42), (True, "qemu-system-x86_64"))
+
+    def test_is_running_no_such_process(self):
+        with mock.patch.object(qemu.psutil, "Process",
+                               side_effect=qemu.psutil.NoSuchProcess(42)):
+            self.assertEqual(qemu.is_running(42), (False, None))
+
+    def test_is_running_zombie_is_not_running(self):
+        with mock.patch.object(qemu.psutil, "Process",
+                               return_value=self._proc(status=qemu.psutil.STATUS_ZOMBIE)):
+            self.assertEqual(qemu.is_running(42), (False, "qemu-system-x86_64"))
+
+    def test_terminate_refuses_wrong_process_name(self):
+        # A reused PID now belonging to a non-QEMU process must not be killed.
+        with mock.patch.object(qemu, "is_running", return_value=(True, "python3")):
+            self.assertFalse(qemu.terminate(42))
+
+    def test_terminate_graceful(self):
+        proc = self._proc()
+        proc.wait.return_value = 0
+        with mock.patch.object(qemu, "is_running", return_value=(True, "qemu-system-x86_64")), \
+             mock.patch.object(qemu.psutil, "Process", return_value=proc):
+            self.assertTrue(qemu.terminate(42))
+        proc.terminate.assert_called_once()
+
+    def test_terminate_force(self):
+        proc = self._proc()
+        proc.wait.return_value = 0
+        with mock.patch.object(qemu, "is_running", return_value=(True, "qemu-system-x86_64")), \
+             mock.patch.object(qemu.psutil, "Process", return_value=proc):
+            self.assertTrue(qemu.terminate(42, force=True))
+        proc.kill.assert_called_once()
 
 
 class TestTorControl(unittest.TestCase):

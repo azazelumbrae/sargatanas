@@ -3,22 +3,25 @@
 The rule for this module: a profile may only claim a protection that is
 implemented by code you can run *today* on the host you are on. Anything
 that needs root, a real Tor circuit or a real VPN tunnel is reported as
-"unavailable" with the reason, never silently pretended.
+"unavailable" or "not implemented", never silently pretended.
 
 What each profile does today:
 
     isolated    no network device at all -> air-gapped. Works everywhere.
-    nat         plain QEMU user networking, host forwards. Default.
+    nat         QEMU user networking with port forwards. Default.
     host-only   user networking with restrict=yes: guest cannot reach the
                 host or the LAN, outbound internet still works.
-    tor         user networking proxied through a *running* Tor SOCKS port.
-                Verified before launch; refuses to start if Tor is down.
-    vpn         launches only if the VPN interface is up; iptables kill
-                switch is Linux-only and requires root.
+    tor         a guard: verifies a Tor SOCKS listener is up, then boots
+                with outbound-only user networking (no inbound ports). It
+                does NOT transparently redirect guest traffic - the guest
+                must point its own applications at the host Tor proxy.
+    vpn         a guard: verifies the tunnel interface is up, then boots
+                with normal user networking. Guest egress follows the
+                host's VPN. No kill switch is implemented yet.
 
-Terminology note: `tor` routes TCP through Tor at the hypervisor's user
-networking layer. It does not send UDP through Tor, and it is not the
-Whonix/transparent-proxy model. The CLI says so.
+Seccomp: QEMU's `-sandbox on` is only available in QEMU builds that enable
+it (Linux with libseccomp). It is probed at runtime and applied where
+supported; on other platforms it is neither applied nor claimed.
 """
 
 from __future__ import annotations
@@ -38,16 +41,20 @@ class Profile:
     summary: str
     network: str                       # none | nat | isolated | tor | vpn
     needs: tuple[str, ...] = ()        # runtime requirements, checked at launch
-    sandbox: bool = True               # QEMU self-sandbox (seccomp)
     extra_qemu_args: tuple[str, ...] = ()
 
     def describe_limits(self) -> list[str]:
         if self.key == "tor":
-            return ["TCP only - UDP/DNS over Tor is not handled",
-                    "Not equivalent to a Whonix/Tails workstation"]
+            return [
+                "Verifies Tor is reachable; does not transparently redirect traffic",
+                "Guest apps must be pointed at the host Tor SOCKS manually",
+                "TCP only - UDP/DNS over Tor is not handled",
+            ]
         if self.key == "vpn":
-            return ["Kill switch requires root + iptables (Linux only)",
-                    "Non-Linux: VPN must be configured at the OS level"]
+            return [
+                "Verifies the tunnel interface is up; egress follows the host VPN",
+                "Kill switch (block traffic on tunnel drop) is not implemented",
+            ]
         if self.key == "host-only":
             return ["Guest still reaches the internet via QEMU user NAT"]
         return []
@@ -71,13 +78,13 @@ PROFILES: dict[str, Profile] = {
     ),
     "tor": Profile(
         key="tor",
-        summary="All TCP routed through a Tor SOCKS proxy on the host.",
+        summary="Verifies Tor is up, then boots with no inbound ports.",
         network="tor",
         needs=("tor-socks",),
     ),
     "vpn": Profile(
         key="vpn",
-        summary="Refuses to boot unless the VPN interface is up.",
+        summary="Verifies the VPN interface is up before booting.",
         network="vpn",
         needs=("vpn-interface",),
     ),
@@ -147,27 +154,32 @@ def check_launch(profile: Profile, *, socks_port: int = 9050,
             check.ok = False
             check.reasons.append(
                 f"VPN profile needs an up interface (configured: {vpn_interface or 'none'})")
-    if profile.key == "vpn" and platform.system() != "Linux":
-        check.warnings.append("Kill switch unavailable on this OS; traffic is not blocked on tunnel drop")
-    if profile.sandbox:
-        check.warnings.append("QEMU seccomp sandbox is enabled where the QEMU build supports it")
+    if profile.key == "vpn":
+        check.warnings.append(
+            "Kill switch is not implemented; traffic is not blocked if the tunnel drops")
     return check
 
 
 def qemu_network_args(profile: Profile, forwards: list[str] | None = None,
                       socks_port: int = 9050) -> list[str]:
-    """Translate a profile into QEMU networking arguments."""
+    """Translate a profile into QEMU networking arguments.
+
+    `socks_port` is accepted for API stability but the guard profile does not
+    use it: QEMU user networking has no `socks=` option, so pretending to
+    proxy the guest through Tor at the hypervisor layer would be a lie.
+    """
+    del socks_port
     if profile.network == "none":
         return []
     if profile.network == "isolated":
         return ["-netdev", "user,id=net0,restrict=yes",
                 "-device", "virtio-net-pci,netdev=net0"]
     if profile.network == "tor":
-        # hostfwd-less user networking whose outbound TCP is proxied by Tor.
-        # (A "socket,connect=" netdev would splice TCP streams, not IP -
-        # the guest would get no DHCP and no working stack.)
-        return ["-netdev", f"user,id=net0,socks=127.0.0.1:{socks_port}",
-                "-device", "virtio-net-pci,netdev=net0"]
+        # Outbound-only user networking: no hostfwd, so nothing from the host
+        # can reach the guest. The guest still has normal outbound internet;
+        # the Tor guard only *verifies* Tor is up and documents that routing
+        # must be configured inside the guest.
+        return ["-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0"]
     if profile.network in ("nat", "vpn"):
         fwd = ",".join(f"hostfwd=tcp::{f.replace(':', '-:', 1)}" for f in (forwards or []))
         netdev = "user,id=net0" + (f",{fwd}" if fwd else "")

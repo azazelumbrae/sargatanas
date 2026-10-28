@@ -8,14 +8,15 @@ prefixed with `sudo` and silently half-executed.
 
 from __future__ import annotations
 
+import functools
 import os
 import platform
 import shutil
-import signal
 import subprocess
-import time
 from dataclasses import dataclass
 from pathlib import Path
+
+import psutil
 
 QEMU_BINARIES = ("qemu-system-x86_64", "qemu-system-aarch64")
 
@@ -33,6 +34,22 @@ def host_arch() -> str:
     return machine
 
 
+def _windows_qemu_binaries() -> dict[str, str]:
+    """QEMU on Windows usually installs to Program Files, not PATH."""
+    result: dict[str, str] = {}
+    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if not base:
+            continue
+        qdir = Path(base) / "qemu"
+        if not qdir.is_dir():
+            continue
+        for name in ("qemu-system-x86_64.exe", "qemu-system-aarch64.exe", "qemu-img.exe"):
+            path = qdir / name
+            if path.is_file() and name not in result:
+                result[name] = str(path)
+    return result
+
+
 def find_qemu(binary: str | None = None) -> str:
     """Locate the system QEMU emulator."""
     if binary:
@@ -46,15 +63,24 @@ def find_qemu(binary: str | None = None) -> str:
         found = shutil.which(name)
         if found:
             return found
+    if platform.system() == "Windows":
+        win = _windows_qemu_binaries()
+        for name in (preferred + ".exe", *(n + ".exe" for n in QEMU_BINARIES)):
+            if name in win:
+                return win[name]
     raise QemuError("QEMU not found. Install it: brew install qemu | "
-                    "apt install qemu-system-x86 qemu-utils")
+                    "apt install qemu-system-x86 qemu-utils | choco install qemu")
 
 
 def find_qemu_img() -> str:
     found = shutil.which("qemu-img")
-    if not found:
-        raise QemuError("qemu-img not found. Install the qemu-utils package.")
-    return found
+    if found:
+        return found
+    if platform.system() == "Windows":
+        win = _windows_qemu_binaries()
+        if "qemu-img.exe" in win:
+            return win["qemu-img.exe"]
+    raise QemuError("qemu-img not found. Install the qemu-utils package.")
 
 
 def host_cpu_flag() -> str | None:
@@ -80,6 +106,32 @@ def accelerator() -> list[str]:
 
 def acceleration_available() -> bool:
     return bool(accelerator())
+
+
+@functools.lru_cache(maxsize=1)
+def sandbox_supported(qemu_bin: str | None = None) -> bool:
+    """Whether this QEMU build supports `-sandbox on` (Linux + libseccomp).
+
+    Probed by launching QEMU with `-sandbox on` and a machine that stays up;
+    if QEMU accepts it, the probe times out. If the build lacks seccomp it
+    exits immediately with a clear error. Returns False on any doubt - a
+    missing sandbox is a safe degradation, a false claim is not.
+    """
+    if platform.system() != "Linux":
+        return False
+    try:
+        bin_path = qemu_bin or find_qemu()
+    except QemuError:
+        return False
+    try:
+        subprocess.run([bin_path, "-sandbox", "on", "-machine", "none",
+                        "-display", "none", "-nodefaults"],
+                       capture_output=True, timeout=3)
+    except subprocess.TimeoutExpired:
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return False
 
 
 @dataclass
@@ -182,11 +234,18 @@ def default_display() -> str:
 # ---------- process management ----------
 
 def spawn(argv: list[str]) -> subprocess.Popen:
-    """Start QEMU detached from the terminal's session."""
+    """Start QEMU detached from the terminal's session/console."""
+    kwargs: dict = dict(stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if platform.system() == "Windows":
+        # New process group so Ctrl+C does not reach QEMU, and no console
+        # window for a headless VM.
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        kwargs["creationflags"] = flags
+    else:
+        kwargs["start_new_session"] = True
     try:
-        return subprocess.Popen(argv, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                start_new_session=True)
+        return subprocess.Popen(argv, **kwargs)
     except FileNotFoundError as exc:
         raise QemuError(f"Could not execute {argv[0]}: {exc}") from exc
 
@@ -196,55 +255,48 @@ def is_running(pid: int) -> tuple[bool, str | None]:
     if pid <= 0:
         return False, None
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        proc = psutil.Process(pid)
+        name = proc.name()
+        if proc.status() == psutil.STATUS_ZOMBIE:
+            return False, name
+        return True, name
+    except (psutil.NoSuchProcess, psutil.ZombieProcess):
         return False, None
-    except PermissionError:
+    except psutil.Error:
+        # AccessDenied or similar: the process exists, we just cannot read it.
         return True, None
-    name = None
-    try:
-        name = Path(f"/proc/{pid}/comm").read_text().strip()
-    except OSError:
-        name = process_name_mac(pid) if platform.system() == "Darwin" else None
-    return True, name
-
-
-def process_name_mac(pid: int) -> str | None:
-    try:
-        out = subprocess.run(["ps", "-p", str(pid), "-o", "comm="],
-                             capture_output=True, text=True, timeout=2)
-        return out.stdout.strip() or None
-    except (OSError, subprocess.SubprocessError):
-        return None
 
 
 def terminate(pid: int, force: bool = False, timeout: float = 15.0) -> bool:
-    """Stop a process gracefully, escalating to SIGKILL. True if it is gone."""
+    """Stop a process gracefully, escalating to a hard kill. True if gone."""
     running, name = is_running(pid)
     if not running:
         return True
-    if name and "qemu" not in name:
+    if name and "qemu" not in name.lower():
         # Refuse to kill something that merely reused the PID.
         return False
-    sig = signal.SIGKILL if force else signal.SIGTERM
     try:
-        os.kill(pid, sig)
-    except ProcessLookupError:
+        proc = psutil.Process(pid)
+        if force:
+            proc.kill()
+        else:
+            # On Windows this is an immediate TerminateProcess (no SIGTERM).
+            proc.terminate()
+    except psutil.NoSuchProcess:
         return True
-    except OSError:
+    except psutil.Error:
         return False
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not is_running(pid)[0]:
-            return True
-        time.sleep(0.1)
-    if not force:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            return not is_running(pid)[0]
-        time.sleep(0.3)
-    return not is_running(pid)[0]
+    try:
+        proc.wait(timeout=timeout)
+        return True
+    except psutil.TimeoutExpired:
+        if not force:
+            try:
+                proc.kill()
+                proc.wait(timeout=3)
+            except psutil.Error:
+                pass
+        return not is_running(pid)[0]
 
 
 # ---------- disks ----------

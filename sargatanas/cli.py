@@ -7,8 +7,9 @@ interactive menu; with `--gui` it launches the GTK app on Linux/macOS.
 from __future__ import annotations
 
 import argparse
+import os
+import platform
 import shutil
-import socket
 import sys
 from pathlib import Path
 
@@ -19,8 +20,24 @@ CYAN, GREEN, YELLOW, RED, DIM, BOLD, NC = (
     "\033[2m", "\033[1m", "\033[0m")
 
 
+def _enable_windows_vt() -> None:
+    """Turn on ANSI escape processing in old cmd/PowerShell consoles."""
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 0x0004)
+    except Exception:  # noqa: BLE001 - colours are cosmetic
+        pass
+
+
+_enable_windows_vt()
+
+
 def color(text: str, code: str) -> str:
-    if not sys.stdout.isatty():
+    if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
         return text
     return f"{code}{text}{NC}"
 
@@ -241,11 +258,29 @@ def cmd_tor(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_gui(_: argparse.Namespace) -> int:
+def cmd_gui(args: argparse.Namespace) -> int:
+    if getattr(args, "gtk", False):
+        return _gui_gtk()
+    # Tkinter is stdlib and works on Linux, macOS and Windows.
+    try:
+        from .gui_tk import main as tk_main
+    except ImportError as exc:
+        print(color(f"[-] Tkinter GUI unavailable: {exc}", RED))
+        print("    Install a Python with Tk, or use: sargatanas gui --gtk")
+        return 1
+    try:
+        return tk_main()
+    except Exception as exc:  # noqa: BLE001 - top-level UI boundary
+        print(color(f"[-] Could not start the GUI: {exc}", RED))
+        print("    If there is no display server, use the CLI instead.")
+        return 1
+
+
+def _gui_gtk() -> int:
     try:
         from .gui import main as gui_main
     except ImportError as exc:
-        print(color(f"[-] GUI unavailable: {exc}", RED))
+        print(color(f"[-] GTK GUI unavailable: {exc}", RED))
         print("    Linux: sudo apt install python3-gi gir1.2-gtk-3.0")
         print("    macOS: brew install pygobject3 gtk+3")
         return 1
@@ -359,7 +394,8 @@ def build_parser() -> argparse.ArgumentParser:
     tor_sub.add_parser("check", help="Check the SOCKS port")
     s.set_defaults(func=cmd_tor, command="tor")
 
-    s = sub.add_parser("gui", help="Launch the GTK interface")
+    s = sub.add_parser("gui", help="Launch the graphical interface (Tkinter)")
+    s.add_argument("--gtk", action="store_true", help="Use the GTK interface instead")
     s.set_defaults(func=cmd_gui)
 
     s = sub.add_parser("menu", help="Interactive menu")

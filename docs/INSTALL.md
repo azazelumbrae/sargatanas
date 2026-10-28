@@ -18,7 +18,7 @@ sargatanas --version
 | Debian/Ubuntu | `sudo apt install qemu-system-x86 qemu-utils` |
 | Fedora | `sudo dnf install qemu-system-x86 qemu-img` |
 | Arch | `sudo pacman -S qemu-full` |
-| Windows | `choco install qemu`, then add `C:\Program Files\qemu` to `PATH` |
+| Windows | `choco install qemu`; Sargatanas also probes `C:\Program Files\qemu` if QEMU is not on `PATH` |
 
 Verify with `sargatanas status`; it reports the binary and the accelerator.
 
@@ -34,15 +34,27 @@ Without acceleration QEMU still runs, just much slower.
 
 ## GUI
 
+`sargatanas gui` launches the **Tkinter** interface, which ships with Python
+on Linux, macOS and Windows - no extra packages needed.
+
+```bash
+sargatanas gui          # Tkinter (cross-platform)
+sargatanas gui --gtk    # GTK, if you prefer it (Linux/macOS)
+```
+
+The GTK interface is optional:
+
 ```bash
 # Debian/Ubuntu
 sudo apt install python3-gi gir1.2-gtk-3.0
 # macOS
 brew install pygobject3 gtk+3
+# then
+pip install '.[gtk]'
 ```
 
-Then `sargatanas gui`. The desktop entry in `assets/sargatanas.desktop` can be
-installed to `~/.local/share/applications/`.
+The desktop entry in `assets/sargatanas.desktop` can be installed to
+`~/.local/share/applications/`.
 
 ## Troubleshooting
 
